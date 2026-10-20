@@ -1,0 +1,20 @@
+# Environment & secrets
+.env
+
+# Python virtual environment
+.venv/
+
+# Bytecode cache
+__pycache__/
+
+# Pipeline output
+output/
+
+# On-disk page cache
+cache/
+
+# IDE
+.idea/
+.vscode/
+*.pyc
+*.pyo

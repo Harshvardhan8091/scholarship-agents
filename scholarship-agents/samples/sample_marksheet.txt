@@ -1,0 +1,20 @@
+========================================================================
+ACADEMIC TRANSCRIPT RECORD (TEXT FORMAT)
+========================================================================
+Student Name: Alex Rivera
+Registration No: CS-2021-8842
+Degree: Bachelor of Technology in Computer Science & Engineering
+Specialization: Systems and Artificial Intelligence
+
+SEMESTER WISE PERFORMANCE SUMMARY:
+Semester I:   GPA 8.70 / 10.0
+Semester II:  GPA 8.85 / 10.0
+Semester III: GPA 8.90 / 10.0
+Semester IV:  GPA 9.00 / 10.0
+Semester V:   GPA 8.95 / 10.0
+Semester VI:  GPA 9.10 / 10.0
+
+CUMULATIVE CGPA: 8.92 / 10.00
+Classification: First Class with Distinction (Honors)
+Core Disciplines: Algorithms (A+), Operating Systems (A), Machine Learning (A+)
+========================================================================
