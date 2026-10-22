@@ -1,6 +1,6 @@
 # 🎓 AI Scholarship & University Program Finder
 
-A robust, production-grade autonomous multi-agent system built with **Python 3.11+**, **LangGraph**, **Google Gemini (`google-genai` SDK)**, and **FastAPI**. 
+A robust, production-grade autonomous multi-agent system built with **Python 3.11+**, **LangGraph**, **OpenAI-compatible Groq + Google Gemini (`google-genai` SDK)**, and **FastAPI**. 
 
 Given a student's resume PDF, academic transcript/marksheet (PDF or plain text), and GitHub profile, a coordinated team of specialized AI agents searches the live internet for authentic scholarships, verifies eligibility criteria against official web pages, ranks the top 5 matches, and drafts a personalized, strictly-grounded Statement of Purpose (SOP).
 
@@ -11,7 +11,7 @@ Given a student's resume PDF, academic transcript/marksheet (PDF or plain text),
 - **Zero Hardcoding**: Evaluates any student profile dynamically. Tested across arbitrary degree disciplines and geographies.
 - **Strict Grounding & Verification**: Never invents scholarships, deadlines, or student achievements. Every single verified opportunity links to an official source URL.
 - **Full Failure Recovery & Self-Healing**:
-  - **Gemini Rate Limit (429) & Resource Exhausted**: Automatic exponential backoff and retry.
+  - **Provider Fallback**: Ordered LLM fallback via `LLM_PROVIDERS` (`groq,gemini` by default), with automatic switch on 429/quota/timeout and invalid JSON.
   - **LLM Invalid JSON**: 3-stage iterative feedback loop feeding back exact parse errors to the model.
   - **Web Scraping Timeouts / SSL / Cloudflare Blocks**: Automatic backoff retry, fallback to contextual search snippet data, or explicit tagging as `"unverified"` without crashing.
   - **Insufficient Candidate Recovery**: If fewer than 10 candidates qualify after verification, the orchestrator triggers an automatic recovery loop broadening the search scope (up to 2 additional rounds).
@@ -81,7 +81,7 @@ flowchart TD
 
 - **Runtime**: Python 3.11+
 - **Orchestration**: LangGraph
-- **LLM**: Google Gemini via official `google-genai` SDK (`gemini-2.5-flash` or custom `GEMINI_MODEL`)
+- **LLM**: OpenAI-compatible Groq and Google Gemini via `openai` + `google-genai` SDK (`GROQ_MODEL` / `GEMINI_MODEL`)
 - **Web Search**: Tavily Search API (`tavily-python`)
 - **Document & Web Parsing**: `pypdf`, `httpx`, `trafilatura`, `beautifulsoup4`
 - **Backend API**: FastAPI, Uvicorn, Server-Sent Events (SSE)
@@ -122,9 +122,18 @@ cp .env.example .env
 Edit `.env` with your API keys:
 
 ```env
-# Google Gemini API Key (Required for live LLM execution)
+# Ordered LLM fallback providers
+LLM_PROVIDERS=groq,gemini
+
+# Groq API (OpenAI-compatible endpoint)
+GROQ_API_KEY=your_groq_api_key_here
+GROQ_MODEL=openai/gpt-oss-120b
+GROQ_MODEL_FALLBACKS=openai/gpt-oss-20b
+
+# Google Gemini API (optional fallback provider)
 GEMINI_API_KEY=your_gemini_api_key_here
 GEMINI_MODEL=gemini-2.5-flash
+GEMINI_MODEL_FALLBACKS=gemini-2.5-flash,gemini-2.0-flash
 
 # Tavily Web Search API Key (Required for live web discovery)
 TAVILY_API_KEY=your_tavily_api_key_here

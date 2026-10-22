@@ -2,6 +2,7 @@ import argparse
 import asyncio
 import json
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -15,6 +16,7 @@ if sys.platform == "win32":
         pass
 
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
@@ -69,6 +71,11 @@ def parse_args() -> argparse.Namespace:
         default=False,
         help="Fail loudly if the run is OFFLINE",
     )
+    parser.add_argument(
+        "--save-demo",
+        action="store_true",
+        help="Copy a successful live result to samples/demo_result.json",
+    )
     return parser.parse_args()
 
 
@@ -85,19 +92,26 @@ async def main_async() -> None:
 
     # Item 1 & 5: Startup liveness check
     startup_res = await run_startup_checks()
-    is_startup_live = bool(startup_res.get("gemini_live") and startup_res.get("tavily_live"))
+    working_llm_providers = startup_res.get("working_providers") or []
+    is_startup_live = bool(working_llm_providers)
 
     if args.require_live and not is_startup_live:
         console.print(
             Panel.fit(
                 "[bold red]❌ FATAL ERROR: --require-live was specified, but system startup check failed for LIVE mode![/bold red]\n"
-                f"  Exact Model: {settings.GEMINI_MODEL}\n"
-                f"  Gemini Live: {startup_res.get('gemini_live')} | Tavily Live: {startup_res.get('tavily_live')}",
+                f"  Working LLM Providers: {', '.join(working_llm_providers) if working_llm_providers else 'none'}\n"
+                f"  Tavily Live: {startup_res.get('tavily_live')}",
                 border_style="red",
                 title="Live Mode Required",
             )
         )
         sys.exit(1)
+
+    if not startup_res.get("tavily_live"):
+        settings.TAVILY_API_KEY = ""
+        console.print(
+            "[yellow]Search API unavailable; skipping repeated search requests and using curated candidates with live page verification.[/yellow]"
+        )
 
     inputs = {
         "resume_path": args.resume,
@@ -107,6 +121,8 @@ async def main_async() -> None:
     }
 
     result = await run_pipeline(inputs, print_to_terminal=True)
+    result["startup_llm_provider_calls"] = startup_res.get("llm_provider_calls", {})
+    result["startup_llm_model_calls"] = startup_res.get("llm_model_calls", {})
 
     # 1. Print Student Profile Summary
     profile = result.get("student_profile")
@@ -139,24 +155,39 @@ async def main_async() -> None:
         opps_table.add_column("Rank", style="bold yellow", justify="center")
         opps_table.add_column("Scholarship & Provider", style="bold white")
         opps_table.add_column("Country", style="cyan")
+        opps_table.add_column("Degree", style="cyan")
         opps_table.add_column("Fit Score", style="bold green", justify="center")
-        opps_table.add_column("Funding", style="white")
-        opps_table.add_column("Deadline", style="magenta")
-        opps_table.add_column("Source", style="dim")
-        opps_table.add_column("Verification", style="dim")
-        opps_table.add_column("Official Source URL", style="blue")
+        opps_table.add_column("Official URL", style="blue")
+        opps_table.add_column("Verified vs Unverified", style="white")
+        opps_table.add_column("Matched / Unmet", style="dim")
+        opps_table.add_column("Why It Fits", style="dim")
 
         for opp in ranked_data["top_opportunities"]:
+            verified_data = opp.get("verified_data") or {}
+            matched = verified_data.get("matched_criteria") or []
+            unmet = verified_data.get("unmet_criteria") or []
+            fields = [
+                key for key, value in verified_data.items()
+                if key in {"eligibility", "funding_amount_coverage", "deadline", "how_to_apply"}
+                and isinstance(value, str)
+                and "unverified" not in value.lower()
+            ]
+            if not fields:
+                fields = ["unverified: eligibility, funding, deadline, how_to_apply"]
+            matched_summary = "; ".join(str(v) for v in matched[:3]) if matched else "—"
+            unmet_summary = "; ".join(str(v) for v in unmet[:3]) if unmet else "—"
+            fit_reason = opp.get("reasoning") or verified_data.get("student_fit_reason") or "—"
+
             opps_table.add_row(
                 f"#{opp['rank']}",
                 f"{opp['name']}\n[dim]{opp['provider']}[/dim]",
                 opp["country"],
+                (opp.get("degree_level") or "unverified")[:16],
                 f"{opp['fit_score']}%",
-                opp["funding"][:40],
-                opp["deadline"][:30],
-                opp.get("discovery_source", "unknown"),
-                opp.get("verification_mode", "unknown"),
-                opp["official_url"],
+                opp.get("official_url", "N/A"),
+                "; ".join(fields)[:120],
+                f"Matched: {matched_summary[:80]}\nUnmet: {unmet_summary[:80]}",
+                fit_reason[:180],
             )
         console.print(opps_table)
 
@@ -193,18 +224,33 @@ async def main_async() -> None:
 
     is_run_live = llm_live_count > 0 and is_startup_live
     status_label = "[bold green]LIVE[/bold green]" if is_run_live else "[bold yellow]OFFLINE[/bold yellow]"
+    provider_counts = result.get("llm_provider_calls", {}) or {}
+    model_counts = result.get("llm_model_calls", {}) or {}
+    startup_provider_counts = result.get("startup_llm_provider_calls", {}) or {}
+    startup_model_counts = result.get("startup_llm_model_calls", {}) or {}
+    provider_summary = ", ".join(f"{name}={count}" for name, count in sorted(provider_counts.items())) or "none"
+    model_summary = ", ".join(f"{escape(repr(name))}={count}" for name, count in sorted(model_counts.items())) or "none"
+    startup_provider_summary = ", ".join(
+        f"{name}={count}" for name, count in sorted(startup_provider_counts.items())
+    ) or "none"
+    startup_model_summary = ", ".join(
+        f"{escape(repr(name))}={count}" for name, count in sorted(startup_model_counts.items())
+    ) or "none"
 
     agg_line = f"  \u2022 aggregator_excluded: [dim]{aggregator_excluded_count}[/dim] (kept in candidates, NOT in top-5)\n" if aggregator_excluded_count else ""
     closed_line = f"  \u2022 [bold red]closed deadlines: {closed_deadline_count}[/bold red]\n" if closed_deadline_count else ""
 
     summary_panel = Panel.fit(
-        f"[bold]Exact Model in Use:[/bold]  [bold cyan]{settings.GEMINI_MODEL}[/bold cyan]\n"
+        f"[bold]Startup Model Answered:[/bold] [bold cyan]{escape(repr(startup_res.get('model') or 'none'))}[/bold cyan]\n"
         f"[bold]Verification Breakdown (Top 5):[/bold]\n"
         f"  \u2022 llm_live:   [bold green]{llm_live_count}[/bold green]\n"
         f"  \u2022 heuristic:  [bold yellow]{heuristic_count}[/bold yellow]\n"
         f"  \u2022 unverified: [dim]{unverified_count}[/dim]\n"
         f"{agg_line}"
         f"{closed_line}"
+        f"[bold]Startup provider/model calls:[/bold] {startup_provider_summary} / {startup_model_summary}\n"
+        f"[bold]LLM provider calls:[/bold] {provider_summary}\n"
+        f"[bold]LLM model calls:[/bold] {model_summary}\n"
         f"[bold]Run Status:[/bold]           {status_label}",
         title="\U0001f3af Final Run Verification Audit",
         border_style="green" if is_run_live else "yellow",
@@ -218,6 +264,19 @@ async def main_async() -> None:
         json.dump(result, f, indent=2, ensure_ascii=False)
 
     console.print(f"\n[bold green]✔ Full JSON results successfully saved to:[/bold green] {output_path.resolve()}\n")
+
+    if args.save_demo:
+        if is_run_live:
+            demo_path = settings.OUTPUT_DIR.parent / "samples" / "demo_result.json"
+            demo_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(output_path, demo_path)
+            console.print(
+                f"[bold green]✔ Successful live result copied to:[/bold green] {demo_path.resolve()}"
+            )
+        else:
+            console.print(
+                "[bold yellow]Demo result not saved: this run did not complete with llm_live greater than zero.[/bold yellow]"
+            )
 
     # Item 5: Fail loudly if run is OFFLINE and --require-live is passed
     if args.require_live and not is_run_live:

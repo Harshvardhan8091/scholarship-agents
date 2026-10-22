@@ -6,6 +6,7 @@ from typing import Any, Callable, Coroutine, Dict, Optional, Union
 
 from event_bus import EventBus
 from graph import PipelineState, create_scholarship_graph
+from llm_client import LLM_CALL_COUNTS, reset_call_counts
 from models import PipelineEvent
 
 
@@ -34,6 +35,7 @@ async def run_pipeline(
         },
     )
 
+    reset_call_counts()
     workflow = create_scholarship_graph()
     app = workflow.compile()
 
@@ -60,12 +62,17 @@ async def run_pipeline(
     sop_res = final_state.get("sop_draft")
     profile_res = final_state.get("profile")
 
+    provider_counts = dict(LLM_CALL_COUNTS["providers"])
+    model_counts = dict(LLM_CALL_COUNTS["models"])
+
     result = {
         "student_profile": profile_res.model_dump() if profile_res else None,
         "total_candidates": len(final_state.get("candidates", [])),
         "total_verified": len(final_state.get("verified_opportunities", [])),
         "ranked_results": ranked_res.model_dump() if ranked_res else None,
         "sop_draft": sop_res.model_dump() if sop_res else None,
+        "llm_provider_calls": provider_counts,
+        "llm_model_calls": model_counts,
         "events": [e.model_dump() for e in event_bus.get_history()],
     }
 

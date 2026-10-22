@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import date, datetime
+import unicodedata
 import re
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urljoin, urlparse
@@ -26,6 +27,10 @@ BROWSER_HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
 }
 
+MAX_VERIFICATION_CANDIDATES = 10
+CANDIDATE_TIMEOUT_SECONDS = 40
+MAX_PAGE_TEXT_CHARS = 4000
+
 AGGREGATOR_PATTERNS = [
     r"\b\d+\+?\s+scholarships\b",
     r"\b(?:top|best)\s+\d+\b",
@@ -33,6 +38,8 @@ AGGREGATOR_PATTERNS = [
     r"\btop\s+(?:universities|scholarships|colleges)\b",
     r"\bbest\s+(?:scholarships|universities|colleges)\b",
     r"\blist\s+of\s+(?:top|best|\d+)",
+    r"\b(?:scholarship|funding|award)\s+(?:directory|database|listing|list)\b",
+    r"\b(?:top\s+\d+|best\s+\d+).{0,40}(?:scholarship|funding|award)",
 ]
 
 AGGREGATOR_DOMAINS = [
@@ -48,11 +55,16 @@ AGGREGATOR_DOMAINS = [
     "hotcoursesabroad.com",
     "profellow.com",
     "expatrio.com",
+    "globaladmissions.com",
+    "globalscholarships.com",
+    "scholarshiproar.com",
+    "scholarships.com",
     "scholarshipsads.com",
     "scholarship-positions.com",
     "eduopportunities.com",
     "findamasters.com",
     "mastersportal.eu",
+    "studyportals.com",
 ]
 
 # Generic snippet patterns that should be rejected as non-evidence
@@ -65,6 +77,10 @@ GENERIC_SNIPPET_PATTERNS = [
     r"beware",
     r"deadline\s+detail\s+for\s+each",   # vague aggregator-level phrase
     r"eligibility\s+and\s+deadline\s+detail",
+    r"^\s*(?:scholarships?|eligibility|funding|application)\s+available\s+for\b",
+    r"\b(?:visit|check|see)\s+(?:the\s+)?(?:official\s+)?(?:website|page|portal)\s+for\s+more",
+    r"\blearn more about\b",
+    r"\bvarious (?:scholarship|funding) opportunities\b",
 ]
 
 
@@ -83,6 +99,17 @@ def _is_generic_snippet(text: str) -> bool:
     return False
 
 
+def _normalise_evidence(text: str) -> str:
+    return " ".join(unicodedata.normalize("NFKC", text).casefold().split())
+
+
+def _is_source_evidence(snippet: object, page_text: str) -> bool:
+    if not isinstance(snippet, str) or _is_generic_snippet(snippet):
+        return False
+    normalized_snippet = _normalise_evidence(snippet)
+    return len(normalized_snippet) >= 8 and normalized_snippet in _normalise_evidence(page_text)
+
+
 def _parse_deadline(raw: str) -> Tuple[Optional[date], str]:
     """
     Try to parse a deadline string into a real date.
@@ -96,7 +123,7 @@ def _parse_deadline(raw: str) -> Tuple[Optional[date], str]:
     # Try various date formats
     formats = [
         "%Y-%m-%d", "%d %B %Y", "%B %d, %Y", "%d/%m/%Y", "%m/%d/%Y",
-        "%d %b %Y", "%b %d, %Y", "%B %Y", "%b %Y",
+        "%d %b %Y", "%b %d, %Y",
     ]
     # Also try extracting a date substring with regex
     date_patterns = [
@@ -119,12 +146,6 @@ def _parse_deadline(raw: str) -> Tuple[Optional[date], str]:
         for fmt in formats:
             try:
                 parsed = datetime.strptime(s.strip(), fmt).date()
-                # Require at minimum a month+year (day optional)
-                if fmt in ("%B %Y", "%b %Y"):
-                    # Month+year only — treat as last day of that month
-                    import calendar
-                    last_day = calendar.monthrange(parsed.year, parsed.month)[1]
-                    parsed = parsed.replace(day=last_day)
                 iso = parsed.isoformat()
                 if parsed < today:
                     return parsed, f"closed for this cycle (was {iso})"
@@ -148,10 +169,11 @@ class VerifierAgent:
         profile: StudentProfile,
         event_bus: EventBus,
     ) -> List[VerifiedOpportunity]:
+        verification_candidates = candidates[:MAX_VERIFICATION_CANDIDATES]
         await event_bus.emit(
             agent="VerifierAgent",
             event_type="started",
-            message=f"Starting verification of {len(candidates)} candidate opportunities in parallel (concurrency limit: {self.concurrency})...",
+            message=f"Starting verification of {len(verification_candidates)} of {len(candidates)} candidate opportunities in parallel (concurrency limit: {self.concurrency})...",
         )
 
         semaphore = asyncio.Semaphore(self.concurrency)
@@ -159,18 +181,35 @@ class VerifierAgent:
 
         async def _verify_with_limit(candidate: CandidateOpportunity) -> VerifiedOpportunity:
             async with semaphore:
-                return await self._verify_candidate(candidate, profile, event_bus)
+                return await asyncio.wait_for(
+                    self._verify_candidate(candidate, profile, event_bus),
+                    timeout=CANDIDATE_TIMEOUT_SECONDS,
+                )
 
-        tasks = [_verify_with_limit(cand) for cand in candidates]
+        tasks = [_verify_with_limit(cand) for cand in verification_candidates]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         for i, res in enumerate(results):
             if isinstance(res, Exception):
-                cand = candidates[i]
+                cand = verification_candidates[i]
+                if isinstance(res, asyncio.TimeoutError):
+                    error_message = (
+                        f"Verification timed out after {CANDIDATE_TIMEOUT_SECONDS} seconds "
+                        f"for {cand.name}. Marking as unverified."
+                    )
+                    missing_information = [
+                        f"Verification timed out after {CANDIDATE_TIMEOUT_SECONDS} seconds."
+                    ]
+                else:
+                    error_message = (
+                        f"Verification unhandled exception for {cand.name}: {res}. "
+                        "Marking as unverified."
+                    )
+                    missing_information = [f"Verification error: {res}"]
                 await event_bus.emit(
                     agent="VerifierAgent",
                     event_type="recovery",
-                    message=f"Verification unhandled exception for {cand.name}: {res}. Marking as unverified.",
+                    message=error_message,
                 )
                 verified_results.append(
                     VerifiedOpportunity(
@@ -179,7 +218,7 @@ class VerifierAgent:
                         country=cand.country,
                         official_url=cand.official_url,
                         match_status="unverified",
-                        missing_information=[f"Verification error: {res}"],
+                        missing_information=missing_information,
                         source_urls=[cand.official_url],
                         discovery_source=cand.discovery_source,
                         verification_mode="unverified",
@@ -211,7 +250,11 @@ class VerifierAgent:
         d = urlparse(url).netloc.lower()
         if any(re.search(p, t) for p in AGGREGATOR_PATTERNS):
             return True
-        if any(ad in d for ad in AGGREGATOR_DOMAINS):
+        if any(d == ad or d.endswith(f".{ad}") for ad in AGGREGATOR_DOMAINS):
+            return True
+        if re.search(r"\b(?:blog|blogs|medium|substack)\b", d):
+            return True
+        if any(word in d for word in ("blog.", "blogs.", "medium.com", "substack.com")):
             return True
         return False
 
@@ -225,21 +268,23 @@ class VerifierAgent:
                 full_url = urljoin(base_url, href)
                 if not full_url.startswith("http"):
                     continue
-                # If pointing to an official domain (.edu, .ac.*, .gov, daad.de, etc.)
                 if is_official_domain(full_url):
                     return full_url
-                # Or text indicates official portal
-                link_text = a.get_text().strip().lower()
-                if any(k in link_text for k in ["official website", "official portal", "official link", "visit website", "apply here"]):
-                    if not any(soc in full_url.lower() for soc in ["facebook", "twitter", "linkedin", "instagram", "youtube", "telegram", "whatsapp"]):
-                        return full_url
         except Exception:
             pass
         return None
 
     @staticmethod
-    def _extract_relevant_text(page_text: str, max_chars: int = 6000) -> str:
-        """Truncates page text to the most relevant ~6000 characters."""
+    def _official_page_title(html: str) -> str:
+        if not html:
+            return ""
+        soup = BeautifulSoup(html, "html.parser")
+        heading = soup.find("h1") or soup.find("title")
+        return heading.get_text(" ", strip=True)[:160] if heading else ""
+
+    @staticmethod
+    def _extract_relevant_text(page_text: str, max_chars: int = MAX_PAGE_TEXT_CHARS) -> str:
+        """Truncates page text to the most relevant characters for verification."""
         if len(page_text) <= max_chars:
             return page_text
         keywords = [
@@ -276,6 +321,8 @@ class VerifierAgent:
         # If aggregator, attempt to follow official source link
         if is_agg:
             official_link = self._find_official_link_in_html(raw_html, candidate.official_url) if raw_html else None
+            if official_link and self._is_aggregator(candidate.name, official_link):
+                official_link = None
             if official_link:
                 await event_bus.emit(
                     agent="VerifierAgent",
@@ -284,13 +331,18 @@ class VerifierAgent:
                     details={"aggregator_url": candidate.official_url, "official_url": official_link},
                 )
                 candidate.official_url = official_link
-                page_text, _ = await self._fetch_page_content_and_html(official_link, event_bus)
-            else:
-                # Hard-exclude aggregator with no official link — mark so ranker can drop it entirely
+                page_text, official_html = await self._fetch_page_content_and_html(official_link, event_bus)
+                official_title = self._official_page_title(official_html)
+                if official_title and not self._is_aggregator(official_title, official_link):
+                    candidate.name = official_title
+                    candidate.provider = urlparse(official_link).netloc
+                else:
+                    official_link = None
+            if not official_link:
                 await event_bus.emit(
                     agent="VerifierAgent",
                     event_type="recovery",
-                    message=f"Excluding aggregator/listicle with no official source link (will NOT appear in top-5): {candidate.name[:45]}.",
+                    message=f"Excluding aggregator/listicle with no identifiable official opportunity page: {candidate.name[:45]}.",
                 )
                 return VerifiedOpportunity(
                     name=candidate.name,
@@ -298,7 +350,7 @@ class VerifierAgent:
                     country=candidate.country,
                     official_url=candidate.official_url,
                     match_status="aggregator_excluded",
-                    unmet_criteria=["Aggregator/listicle page with no official source link — excluded from recommendations"],
+                    unmet_criteria=["Aggregator/listicle page with no identifiable official opportunity page — excluded from recommendations"],
                     source_urls=[candidate.official_url],
                     discovery_source=candidate.discovery_source,
                     verification_mode="heuristic",
@@ -307,39 +359,30 @@ class VerifierAgent:
                 )
 
         if not page_text or "FAILED_FETCH" in page_text:
-            # Fall back to candidate description if fetch fails
-            if candidate.description and len(candidate.description) > 30:
-                await event_bus.emit(
-                    agent="VerifierAgent",
-                    event_type="recovery",
-                    message=f"Page fetch failed for {candidate.name}. Falling back to search snippet text.",
-                )
-                page_text = candidate.description
-            else:
-                await event_bus.emit(
-                    agent="VerifierAgent",
-                    event_type="recovery",
-                    message=f"Page fetch failed and no search snippet for {candidate.name}. Setting match_status to 'unverified'.",
-                )
-                return VerifiedOpportunity(
-                    name=candidate.name,
-                    provider=candidate.provider,
-                    country=candidate.country,
-                    official_url=candidate.official_url,
-                    eligibility="unverified",
-                    funding_amount_coverage="unverified",
-                    deadline="unverified",
-                    required_documents=[],
-                    how_to_apply="unverified",
-                    match_status="unverified",
-                    missing_information=["Official page could not be fetched or was blocked"],
-                    confidence=0.0,
-                    source_urls=[candidate.official_url],
-                    discovery_source=candidate.discovery_source,
-                    verification_mode="unverified",
-                    deadline_source_url=None,
-                    last_checked=date.today().isoformat(),
-                )
+            await event_bus.emit(
+                agent="VerifierAgent",
+                event_type="recovery",
+                message=f"Page fetch failed for {candidate.name}; search snippets are not used as verification evidence.",
+            )
+            return VerifiedOpportunity(
+                name=candidate.name,
+                provider=candidate.provider,
+                country=candidate.country,
+                official_url=candidate.official_url,
+                eligibility="unverified",
+                funding_amount_coverage="unverified",
+                deadline="unverified",
+                required_documents=[],
+                how_to_apply="unverified",
+                match_status="unverified",
+                missing_information=["Official page could not be fetched or was blocked"],
+                confidence=0.0,
+                source_urls=[candidate.official_url] if candidate.official_url else [],
+                discovery_source=candidate.discovery_source,
+                verification_mode="unverified",
+                deadline_source_url=None,
+                last_checked=date.today().isoformat(),
+            )
 
         # 3. Quality filter: Reject opportunities restricted to domestic/resident students
         if is_restricted_to_domestic(page_text):
@@ -353,6 +396,7 @@ class VerifierAgent:
                 provider=candidate.provider,
                 country=candidate.country,
                 official_url=candidate.official_url,
+                degree_level=degree_level,
                 match_status="ineligible",
                 unmet_criteria=["Restricted to domestic/resident students only (international applicant ineligible)"],
                 source_urls=[candidate.official_url],
@@ -437,23 +481,29 @@ class VerifierAgent:
         if not self.llm_client.is_configured:
             return self._heuristic_verifier(candidate, page_text, profile)
 
-        # Truncate page text to relevant ~6000 characters
-        truncated_page_text = self._extract_relevant_text(page_text, max_chars=6000)
+        truncated_page_text = self._extract_relevant_text(
+            page_text,
+            max_chars=MAX_PAGE_TEXT_CHARS,
+        )
 
         target_deg = profile.target_degree_level or "Master's"
         system_instruction = (
             "You are a rigorous scholarship eligibility auditor. "
-            "You compare real webpage content against a student's profile. "
+            "Use facts only from the supplied fetched official webpage text. "
+            "Ignore the candidate title, provider, search metadata, outside knowledge, and assumptions as evidence. "
             "RULES:\n"
             "1. NEVER invent eligibility criteria, deadlines, or funding amounts. "
             "If any field cannot be found on the page, set it explicitly to 'unverified'.\n"
-            "2. For every field you fill (funding_amount_coverage, deadline, eligibility, how_to_apply), "
-            "provide a short verbatim or near-verbatim 'evidence' snippet (max 200 chars) from the webpage.\n"
+            "2. Every non-empty field must have a short verbatim evidence quote from the supplied webpage text; "
+            "never create evidence by paraphrasing your answer.\n"
             "3. Reject opportunities restricted to domestic/resident students when student is international by setting match_status to 'ineligible'.\n"
             "4. Only keep real scholarships or degree programs with funding. If self-funded or fee-paying with no aid, set match_status to 'ineligible'.\n"
             "5. 'match_status' must be one of: 'eligible', 'ineligible', 'partially_eligible', 'unverified'.\n"
-            "6. Return ONLY valid JSON matching the requested schema.\n"
-            "7. Deadline must be a specific parseable date (e.g. '2025-01-15'). If only vague text, set to 'unverified'."
+            "6. The student requires a Master's degree. Set degree_level to 'Master's' only when the page explicitly identifies "
+            "a Master's/MSc degree; otherwise use 'unverified'. Do not treat generic postgraduate study as proof of a Master's.\n"
+            "7. Exclude programs restricted to students already enrolled at a named institution.\n"
+            "8. Return ONLY valid JSON matching the requested schema.\n"
+            "9. Deadline must be a specific parseable date (e.g. '2027-01-15'). If only vague text, set to 'unverified'."
         )
 
         prompt = f"""
@@ -486,16 +536,19 @@ If any answer is 'no', add it to unmet_criteria and reduce match_status accordin
 OUTPUT SCHEMA:
 Return a single JSON object with these keys:
 {{
+  "degree_level": "Master's" or "unverified",
   "eligibility": string (summary of official eligibility rules, or 'unverified'),
   "funding_amount_coverage": string (e.g. 'Full tuition + monthly stipend', or 'unverified'),
   "deadline": string (specific ISO date 'YYYY-MM-DD' or 'unverified' — NOT vague text),
   "required_documents": [string],
   "how_to_apply": string (summary or 'unverified'),
   "evidence": {{
+    "degree_level": string or null (max 200 chars copied verbatim from page),
     "eligibility": string or null (max 200 chars verbatim quote from page),
     "funding_amount_coverage": string or null (max 200 chars verbatim quote from page),
     "deadline": string or null (max 200 chars verbatim quote from page),
-    "how_to_apply": string or null (max 200 chars verbatim quote from page)
+    "how_to_apply": string or null (max 200 chars verbatim quote from page),
+    "required_documents": string or null (max 200 chars verbatim quote from page)
   }},
   "match_status": "eligible" | "ineligible" | "partially_eligible" | "unverified",
   "matched_criteria": [string],
@@ -518,60 +571,110 @@ Return a single JSON object with these keys:
             raw_deadline = str(json_data.get("deadline", "unverified"))
             _parsed_dt, deadline_status = _parse_deadline(raw_deadline)
 
-            # Extract evidence snippets (max 200 chars) — reject generic/scam snippets
             evidence_in = json_data.get("evidence") or {}
             evidence_clean: Dict[str, str] = {}
             if isinstance(evidence_in, dict):
-                for k, v in evidence_in.items():
-                    if v and isinstance(v, str) and v.lower() != "unverified":
-                        if not _is_generic_snippet(v):
-                            evidence_clean[k] = v.strip()[:200]
+                for key, snippet in evidence_in.items():
+                    if _is_source_evidence(snippet, page_text):
+                        evidence_clean[key] = snippet.strip()[:200]
 
-            eligibility = str(json_data.get("eligibility", "unverified"))
-            funding = str(json_data.get("funding_amount_coverage", "unverified"))
-            how_to = str(json_data.get("how_to_apply", "unverified"))
+            def sourced_value(field: str, value: object) -> str:
+                text = str(value or "unverified").strip()
+                if text.lower() == "unverified" or _is_generic_snippet(text):
+                    return "unverified"
+                if field not in evidence_clean:
+                    return "unverified"
+                return text
 
-            # Sanity-check LLM-returned field values
-            if _is_generic_snippet(eligibility):
-                eligibility = "unverified"
-            if _is_generic_snippet(funding):
-                funding = "unverified"
-            if _is_generic_snippet(how_to):
-                how_to = "unverified"
+            degree_evidence = evidence_clean.get("degree_level", "")
+            degree_level = sourced_value(
+                "degree_level", json_data.get("degree_level", "unverified")
+            )
+            if (
+                degree_level != "unverified"
+                and not re.search(r"\b(?:master(?:'s|’s)?|msc|m\.sc\.?)\b", degree_evidence, re.I)
+            ):
+                degree_level = "unverified"
+            if degree_level != "unverified":
+                degree_level = "Master's"
 
-            # Populate evidence if missing from LLM evidence dict
-            if eligibility != "unverified" and "eligibility" not in evidence_clean:
-                evidence_clean["eligibility"] = eligibility[:200]
-            if funding != "unverified" and "funding_amount_coverage" not in evidence_clean:
-                evidence_clean["funding_amount_coverage"] = funding[:200]
-            if deadline_status not in ("unverified",) and "deadline" not in evidence_clean:
-                evidence_clean["deadline"] = deadline_status[:200]
-            if how_to != "unverified" and "how_to_apply" not in evidence_clean:
-                evidence_clean["how_to_apply"] = how_to[:200]
+            eligibility = sourced_value("eligibility", json_data.get("eligibility"))
+            funding = sourced_value(
+                "funding_amount_coverage",
+                json_data.get("funding_amount_coverage"),
+            )
+            how_to = sourced_value("how_to_apply", json_data.get("how_to_apply"))
+            deadline_evidence = evidence_clean.get("deadline", "")
+            evidence_deadline, _ = _parse_deadline(deadline_evidence)
+            deadline = (
+                deadline_status
+                if _parsed_dt is not None
+                and evidence_deadline == _parsed_dt
+                else "unverified"
+            )
+            if deadline == "unverified":
+                evidence_clean.pop("deadline", None)
+
+            documents = list(json_data.get("required_documents", []))
+            document_quote = _normalise_evidence(
+                evidence_clean.get("required_documents", "")
+            )
+            documents = [
+                str(document)
+                for document in documents
+                if _normalise_evidence(str(document)) in document_quote
+            ]
+            if not documents:
+                evidence_clean.pop("required_documents", None)
 
             student_fit = str(json_data.get("student_fit_reason", ""))
             matched = list(json_data.get("matched_criteria", []))
             unmet = list(json_data.get("unmet_criteria", []))
             if student_fit and student_fit not in matched:
                 matched.append(f"Fit: {student_fit[:150]}")
+            domestic_restriction = is_restricted_to_domestic(page_text)
+            enrolled_restriction = bool(
+                re.search(
+                    r"(?:must be|only for|restricted to|available only to).{0,60}"
+                    r"(?:already )?(?:enrolled|registered) students at|"
+                    r"only (?:current|existing|registered|enrolled) students (?:at|of)|"
+                    r"(?:students|applicants) already enrolled at|"
+                    r"must be currently enrolled at",
+                    page_text,
+                    re.I,
+                )
+            )
+            enrolled_restriction = enrolled_restriction or any(
+                phrase in " ".join(str(item).lower() for item in unmet)
+                for phrase in ("already enrolled", "currently enrolled", "enrolled at a specific")
+            )
+            if domestic_restriction and not any("domestic" in str(item).lower() for item in unmet):
+                unmet.append("Page restricts eligibility to domestic/resident students.")
+            if enrolled_restriction and not any("enrolled" in str(item).lower() for item in unmet):
+                unmet.append("Page restricts eligibility to students already enrolled at an institution.")
 
             return VerifiedOpportunity(
                 name=candidate.name,
                 provider=candidate.provider,
                 country=candidate.country,
                 official_url=candidate.official_url,
+                degree_level=degree_level,
                 eligibility=eligibility,
                 funding_amount_coverage=funding,
-                deadline=deadline_status,
-                required_documents=list(json_data.get("required_documents", [])),
+                deadline=deadline,
+                required_documents=documents,
                 how_to_apply=how_to,
                 evidence=evidence_clean,
-                match_status=json_data.get("match_status", "unverified"),
+                match_status=(
+                    "ineligible"
+                    if domestic_restriction or enrolled_restriction
+                    else json_data.get("match_status", "unverified")
+                ),
                 matched_criteria=matched,
                 unmet_criteria=unmet,
                 missing_information=list(json_data.get("missing_information", [])),
                 confidence=float(json_data.get("confidence", 0.7)),
-                source_urls=list(json_data.get("source_urls", [candidate.official_url])),
+                source_urls=[candidate.official_url] if candidate.official_url else [],
                 discovery_source=candidate.discovery_source,
                 verification_mode="llm_live",
                 deadline_source_url=candidate.official_url,
@@ -600,6 +703,7 @@ Return a single JSON object with these keys:
         deadline = "unverified"
         eligibility = "unverified"
         how_to_apply = "unverified"
+        degree_level = "unverified"
 
         # Check for domestic-only restrictions
         if is_restricted_to_domestic(page_text):
@@ -619,6 +723,17 @@ Return a single JSON object with these keys:
             )
 
         if page_text and len(page_text) > 40:
+            degree_match = re.search(
+                r"[^.\n]{0,100}\b(?:master(?:'s|’s)?(?:\s+degree)?|MSc|M\.Sc\.?)\b[^.\n]{0,100}",
+                page_text,
+                re.IGNORECASE,
+            )
+            if degree_match:
+                degree_level = "Master's"
+                evidence["degree_level"] = re.sub(
+                    r"\s+", " ", degree_match.group(0)
+                ).strip()[:200]
+
             # 1. Search for real funding evidence on page
             f_match = re.search(
                 r"([^.\n]{0,80}(?:full tuition|fully funded|tuition fee waiver|tuition-free|stipend|living allowance|grant of|scholarship of|covers|provides|\u20ac\s*\d[\d,.]*|\xa3\s*\d[\d,.]*|\$\s*\d[\d,.]*|\d+[\d,.]*\s*(?:EUR|USD|GBP|euros|per month|per year))[^.\n]{0,80})",
@@ -766,6 +881,7 @@ Return a single JSON object with these keys:
             provider=candidate.provider,
             country=candidate.country,
             official_url=candidate.official_url,
+            degree_level=degree_level,
             eligibility=eligibility,
             funding_amount_coverage=funding,
             deadline=deadline,

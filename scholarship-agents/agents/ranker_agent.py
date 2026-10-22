@@ -37,15 +37,26 @@ class RankerAgent:
                 ranking_summary="No opportunities were found or verified.",
             )
 
-        # Filter out ineligible candidates (e.g. domestic-only, rejected listicles, aggregators)
-        non_excluded = [o for o in verified_opportunities if o.match_status not in ("ineligible", "aggregator_excluded")]
         eligible_pool = [
-            o for o in non_excluded if o.match_status in ("eligible", "partially_eligible")
+            opportunity
+            for opportunity in verified_opportunities
+            if opportunity.match_status in ("eligible", "partially_eligible")
+            and opportunity.degree_level == "Master's"
+            and bool(opportunity.official_url.strip())
         ]
+
         if not eligible_pool:
-            eligible_pool = non_excluded if non_excluded else [
-                o for o in verified_opportunities if o.match_status != "aggregator_excluded"
-            ]
+            await event_bus.emit(
+                agent="RankerAgent",
+                event_type="recovery",
+                message="No candidates had page-supported Master's-level eligibility and an official source URL; refusing to rank unverified candidates.",
+            )
+            return RankedResults(
+                top_opportunities=[],
+                total_candidates_found=len(verified_opportunities),
+                total_verified=len(verified_opportunities),
+                ranking_summary="No opportunities met the verified Master's-level and official-source requirements.",
+            )
 
         # If LLM configured, generate rankings and tailored reasoning
         if self.llm_client.is_configured:
@@ -174,12 +185,13 @@ OUTPUT JSON SCHEMA:
                         provider=v_data.provider,
                         country=v_data.country,
                         official_url=v_data.official_url,
+                        degree_level=v_data.degree_level,
                         fit_score=float(item.get("fit_score", 90.0 - len(ranked_picks) * 3)),
                         reasoning=str(item.get("reasoning", "")),
-                        funding=str(item.get("funding", v_data.funding_amount_coverage)),
-                        deadline=str(item.get("deadline", v_data.deadline)),
+                        funding=v_data.funding_amount_coverage,
+                        deadline=v_data.deadline,
                         evidence=v_data.evidence,
-                        application_steps=list(item.get("application_steps", [v_data.how_to_apply])),
+                        application_steps=[v_data.how_to_apply] if v_data.how_to_apply != "unverified" else [],
                         verified_data=v_data,
                         discovery_source=v_data.discovery_source,
                         verification_mode=v_data.verification_mode,
@@ -287,6 +299,7 @@ OUTPUT JSON SCHEMA:
                     provider=opp.provider,
                     country=opp.country,
                     official_url=opp.official_url,
+                    degree_level=opp.degree_level,
                     fit_score=round(min(max(score, 0.0), 100.0), 1),
                     reasoning=" ".join(reasoning_parts),
                     funding=opp.funding_amount_coverage,

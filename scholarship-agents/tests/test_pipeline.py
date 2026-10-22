@@ -158,6 +158,7 @@ async def test_ranker_and_writer_agents():
             provider=f"University {i}",
             country="Germany" if i % 2 == 0 else "Switzerland",
             official_url=f"https://example.edu/scholarship/{i}",
+            degree_level="Master's",
             funding_amount_coverage="Full tuition waiver + stipend",
             deadline="March 31, 2025",
             match_status="eligible",

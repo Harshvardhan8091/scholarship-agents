@@ -23,6 +23,7 @@ if sys.platform == "win32":
         pass
 
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
@@ -43,7 +44,10 @@ def main() -> None:
     ranked_data = data.get("ranked_results") or {}
     top_opps = ranked_data.get("top_opportunities", [])
 
-    # ── 1. LIVE vs OFFLINE determination ──
+    provider_counts = data.get("llm_provider_calls", {}) or {}
+    model_counts = data.get("llm_model_calls", {}) or {}
+    startup_provider_counts = data.get("startup_llm_provider_calls", {}) or {}
+    startup_model_counts = data.get("startup_llm_model_calls", {}) or {}
     tavily_count = 0
     curated_count = 0
     llm_count = 0
@@ -64,14 +68,26 @@ def main() -> None:
         else:
             unverified_mode_count += 1
 
-    is_live = tavily_count > 0 and llm_count > 0
+    is_live = llm_count > 0
     mode_label = "[bold green]LIVE[/bold green]" if is_live else "[bold yellow]OFFLINE[/bold yellow]"
 
+    provider_summary = ", ".join(f"{k}={v}" for k, v in sorted(provider_counts.items())) if provider_counts else "none"
+    model_summary = ", ".join(f"{escape(repr(k))}={v}" for k, v in sorted(model_counts.items())) if model_counts else "none"
+    startup_provider_summary = ", ".join(
+        f"{k}={v}" for k, v in sorted(startup_provider_counts.items())
+    ) if startup_provider_counts else "none"
+    startup_model_summary = ", ".join(
+        f"{escape(repr(k))}={v}" for k, v in sorted(startup_model_counts.items())
+    ) if startup_model_counts else "none"
     console.print(
         Panel.fit(
             f"Run Mode: {mode_label}\n"
             f"  Discovery:    tavily_live={tavily_count}  curated_fallback={curated_count}\n"
-            f"  Verification: llm_live={llm_count}  heuristic={heuristic_count}  unverified={unverified_mode_count}",
+            f"  Verification: llm_live={llm_count}  heuristic={heuristic_count}  unverified={unverified_mode_count}\n"
+            f"  Startup provider calls: {startup_provider_summary}\n"
+            f"  Startup model calls: {startup_model_summary}\n"
+            f"  Pipeline provider calls: {provider_summary}\n"
+            f"  Pipeline model calls: {model_summary}",
             title="📋 Run Analysis",
             border_style="cyan",
         )
@@ -84,6 +100,7 @@ def main() -> None:
         table.add_column("Name", style="bold white", max_width=35)
         table.add_column("Funding", style="white", max_width=30)
         table.add_column("Deadline", style="magenta", max_width=28)
+        table.add_column("Degree", style="cyan", max_width=16)
         table.add_column("Source URL", style="blue", max_width=45)
         table.add_column("Unverified Fields", style="red")
         table.add_column("Source", style="dim")
@@ -103,19 +120,24 @@ def main() -> None:
             # Check which fields are unverified
             unverified_fields = []
             vd = opp.get("verified_data", {})
-            for field_name in ["eligibility", "funding_amount_coverage", "deadline", "how_to_apply"]:
+            for field_name in [
+                "degree_level",
+                "eligibility",
+                "funding_amount_coverage",
+                "deadline",
+                "how_to_apply",
+            ]:
                 val = vd.get(field_name, "")
                 if isinstance(val, str) and "unverified" in val.lower():
                     unverified_fields.append(field_name)
 
-            # ── 3. Check deadline before today — use multi-format date parsing ──
+            # ── 3. Check deadline before today — use parsed dates and explicit warnings ──
             _is_past = False
             if isinstance(deadline, str):
                 if "closed" in deadline.lower():
                     _is_past = True
                     past_deadlines.append((opp.get("name", "?"), deadline))
                 else:
-                    # Try parsing various date formats
                     _fmt_list = [
                         "%Y-%m-%d", "%d %B %Y", "%B %d, %Y", "%d/%m/%Y",
                         "%m/%d/%Y", "%d %b %Y", "%b %d, %Y",
@@ -125,7 +147,7 @@ def main() -> None:
                             parsed = datetime.strptime(deadline.strip(), _fmt).date()
                             if parsed < today:
                                 _is_past = True
-                                past_deadlines.append((opp.get("name", "?"), deadline))
+                                past_deadlines.append((opp.get("name", "?"), f"closed for this cycle (was {parsed.isoformat()})"))
                             break
                         except (ValueError, TypeError):
                             continue
@@ -143,6 +165,7 @@ def main() -> None:
                 opp.get("name", "?"),
                 funding[:30] if funding else "?",
                 deadline_display,
+                (vd.get("degree_level") or "unverified")[:16],
                 url[:45] if url else "[red]MISSING[/red]",
                 ", ".join(unverified_fields) if unverified_fields else "[green]all verified[/green]",
                 ds,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import time
 from pathlib import Path
 import pytest
@@ -107,6 +108,41 @@ async def test_startup_check_runs():
     assert "model" in res
 
 
+def test_env_loader_handles_bom_quotes_and_whitespace(tmp_path, monkeypatch):
+    from config import _sanitize_env_value, load_project_env
+
+    env_path = tmp_path / ".env"
+    env_path.write_bytes(
+        b'\xef\xbb\xbfGROQ_API_KEY="  gsk_test_value  "\r\n'
+        b'GEMINI_API_KEY = \'   testgemini  \'\r\n'
+        b'TAVILY_API_KEY= "  tvly_test  "\r\n'
+        b'GROQ_MODEL = " openai/gpt-oss-120b "\r\n'
+        b'GEMINI_MODEL= "gemini-2.5-flash"\r\n'
+        b'LLM_PROVIDERS= "groq, gemini"\r\n'
+    )
+
+    for key in [
+        "GROQ_API_KEY",
+        "GEMINI_API_KEY",
+        "TAVILY_API_KEY",
+        "GROQ_MODEL",
+        "GEMINI_MODEL",
+        "LLM_PROVIDERS",
+    ]:
+        monkeypatch.delenv(key, raising=False)
+
+    load_project_env(env_path)
+
+    assert _sanitize_env_value('  "value"  ') == "value"
+    assert _sanitize_env_value("\r\n  'value'\r\n") == "value"
+    assert os.environ["GROQ_API_KEY"] == "gsk_test_value"
+    assert os.environ["GEMINI_API_KEY"] == "testgemini"
+    assert os.environ["TAVILY_API_KEY"] == "tvly_test"
+    assert os.environ["GROQ_MODEL"] == "openai/gpt-oss-120b"
+    assert os.environ["GEMINI_MODEL"] == "gemini-2.5-flash"
+    assert os.environ["LLM_PROVIDERS"] == "groq,gemini"
+
+
 def test_heuristic_verifier_no_fabricated_fields_and_evidence():
     from agents.verifier_agent import VerifierAgent
 
@@ -136,7 +172,8 @@ def test_heuristic_verifier_no_fabricated_fields_and_evidence():
     )
     verified_res = agent._heuristic_verifier(cand, page_text, profile)
     assert "1,200" in verified_res.funding_amount_coverage
-    assert "March 31, 2026" in verified_res.deadline
+    assert "closed for this cycle" in verified_res.deadline.lower()
+    assert "2026-03-31" in verified_res.deadline
     assert "international" in verified_res.eligibility
     assert "online admissions portal" in verified_res.how_to_apply
 
@@ -304,6 +341,7 @@ async def test_aggregator_excluded_not_in_top5():
         provider="DAAD",
         country="Germany",
         official_url="https://daad.de/scholarships",
+        degree_level="Master's",
         funding_amount_coverage="Full tuition + monthly stipend",
         match_status="eligible",
         confidence=0.9,

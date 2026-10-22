@@ -48,6 +48,7 @@ class VerifiedOpportunity(BaseModel):
     provider: str
     country: str
     official_url: str
+    degree_level: str = "unverified"
     eligibility: str = "unverified"
     funding_amount_coverage: str = "unverified"
     deadline: str = "unverified"
@@ -75,6 +76,7 @@ class RankedOpportunity(BaseModel):
     provider: str
     country: str
     official_url: str
+    degree_level: str = "unverified"
     fit_score: float = Field(ge=0.0, le=100.0)
     reasoning: str
     funding: str
