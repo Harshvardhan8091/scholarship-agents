@@ -44,6 +44,17 @@ class RankerAgent:
             blocked in domain for blocked in cls.THIRD_PARTY_DOMAINS
         )
 
+    @staticmethod
+    def _is_non_award(name: str, url: str) -> bool:
+        path = urlsplit(url.lower()).path
+        title = name.lower()
+        if any(token in path for token in ("/node/", "/news", "/press", "/blog", "/organisations/")):
+            return True
+        return (
+            re.search(r"\bnew\b.{0,80}\bjoin\b", title) is not None
+            or any(token in title for token in ("announces", "catalogue", "catalog"))
+        )
+
     @classmethod
     def _is_closed(cls, opportunity: VerifiedOpportunity) -> bool:
         source_text = f"{opportunity.name} {opportunity.official_url}"
@@ -186,7 +197,11 @@ class RankerAgent:
         )
 
         for opportunity in verified_opportunities:
-            if self._is_third_party(opportunity.official_url):
+            if self._is_non_award(opportunity.name, opportunity.official_url):
+                if "excluded: non-award" not in opportunity.unmet_criteria:
+                    opportunity.unmet_criteria.append("excluded: non-award")
+                opportunity.match_status = "aggregator_excluded"
+            elif self._is_third_party(opportunity.official_url):
                 if "excluded: third-party" not in opportunity.unmet_criteria:
                     opportunity.unmet_criteria.append("excluded: third-party")
                 opportunity.match_status = "aggregator_excluded"
@@ -236,6 +251,11 @@ class RankerAgent:
             results = self._rank_heuristically(eligible_pool, profile)
 
         results.top_opportunities = self._dedupe_ranked(results.top_opportunities)[:5]
+        if len(results.top_opportunities) < 5:
+            heuristic_results = self._rank_heuristically(eligible_pool, profile)
+            results.top_opportunities = self._dedupe_ranked(
+                results.top_opportunities + heuristic_results.top_opportunities
+            )[:5]
         for rank, opportunity in enumerate(results.top_opportunities, start=1):
             opportunity.rank = rank
 

@@ -295,7 +295,7 @@ async def test_ranker_excludes_sources_and_deduplicates_before_curated_top_up():
     )
     assert "excluded: third-party" in third_party.unmet_criteria
     assert third_party.match_status == "aggregator_excluded"
-    assert "excluded: third-party" in blog.unmet_criteria
+    assert "excluded: non-award" in blog.unmet_criteria
     assert "closed for this cycle" in old_cycle.unmet_criteria
     assert "closed for this cycle" in past_deadline.unmet_criteria
     assert any(
@@ -304,3 +304,61 @@ async def test_ranker_excludes_sources_and_deduplicates_before_curated_top_up():
         and item.verification_mode == "unverified"
         for item in results.top_opportunities
     )
+
+
+def test_ranker_excludes_announcement_and_organisation_pages():
+    assert RankerAgent._is_non_award(
+        "27 new joint masters join the Erasmus Mundus catalogue",
+        "https://erasmus-plus.ec.europa.eu/node/2834",
+    )
+    assert RankerAgent._is_non_award(
+        "Erasmus Mundus Joint Masters",
+        "https://erasmus-plus.ec.europa.eu/opportunities/organisations/program",
+    )
+    assert not RankerAgent._is_non_award(
+        "Erasmus Mundus Joint Masters Scholarships",
+        "https://erasmus-plus.ec.europa.eu/opportunities/individuals/students/erasmus-mundus-joint-masters-scholarships",
+    )
+
+
+@pytest.mark.asyncio
+async def test_ranker_fills_short_llm_ranking_from_eligible_pool():
+    class ShortLLM:
+        is_configured = True
+
+        async def generate_json(self, **kwargs):
+            return {
+                "top_5": [
+                    {
+                        "opportunity_index": 0,
+                        "fit_score": 95,
+                        "reasoning": "Strong match",
+                    }
+                ]
+            }
+
+    opportunities = [
+        VerifiedOpportunity(
+            name=[
+                "Master Data Science Excellence Award",
+                "International Research Tuition Grant",
+                "Computer Engineering Graduate Fellowship",
+                "Global Academic Merit Scholarship",
+                "University Technology Funding Programme",
+            ][index],
+            provider=f"University {index}",
+            country="Germany",
+            official_url=f"https://example{index}.edu/scholarship",
+            degree_level="Master's",
+            funding_amount_coverage="Full tuition",
+            match_status="eligible",
+        )
+        for index in range(5)
+    ]
+    results = await RankerAgent(llm_client=ShortLLM()).run(
+        opportunities,
+        StudentProfile(target_degree_level="Master's"),
+        EventBus(print_to_terminal=False),
+    )
+    assert len(results.top_opportunities) == 5
+    assert len({item.official_url for item in results.top_opportunities}) == 5

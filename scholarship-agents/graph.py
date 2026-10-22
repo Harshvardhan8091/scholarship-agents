@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import date
 from typing import Any, Dict, List, Optional, Set
 from typing_extensions import TypedDict
@@ -12,6 +13,7 @@ from agents import (
     VerifierAgent,
     WriterAgent,
 )
+from agents.verifier_agent import CANDIDATE_TIMEOUT_SECONDS
 from config import settings
 from event_bus import EventBus
 from models import (
@@ -90,7 +92,7 @@ def create_scholarship_graph(
                 existing_urls=existing_urls,
             )
             combined = existing_cands + new_cands
-            return {"candidates": combined}
+            return {"candidates": combined, "research_round": round_idx + 1}
         except Exception as e:
             await bus.emit(
                 agent="ResearchAgent",
@@ -139,8 +141,7 @@ def create_scholarship_graph(
         if len(eligible_candidates) >= 10 or round_idx >= max_rounds:
             return "ranker"
 
-        # Otherwise, increment round and trigger research again
-        state["research_round"] = round_idx + 1
+        # The research node advances research_round in its state update.
         return "research"
 
     # 5. Ranker Node
@@ -197,6 +198,55 @@ def create_scholarship_graph(
                     event_bus=bus,
                     allow_curated_fallback=True,
                 )
+                for ranked_opportunity in ranked_results.top_opportunities:
+                    if ranked_opportunity.discovery_source != "curated_fallback":
+                        continue
+                    candidate = CandidateOpportunity(
+                        name=ranked_opportunity.name,
+                        provider=ranked_opportunity.provider,
+                        country=ranked_opportunity.country,
+                        official_url=ranked_opportunity.official_url,
+                        degree_level=ranked_opportunity.degree_level,
+                        discovery_source="curated_fallback",
+                    )
+                    try:
+                        verified_curated = await asyncio.wait_for(
+                            v_agent._verify_candidate(candidate, profile, bus),
+                            timeout=CANDIDATE_TIMEOUT_SECONDS,
+                        )
+                    except asyncio.TimeoutError:
+                        await bus.emit(
+                            agent="VerifierAgent",
+                            event_type="recovery",
+                            message=f"Curated verification timed out after {CANDIDATE_TIMEOUT_SECONDS} seconds for {candidate.name}; keeping fields unverified.",
+                        )
+                        verified_curated = ranked_opportunity.verified_data.model_copy(
+                            update={
+                                "verification_mode": "unverified",
+                                "eligibility": "unverified",
+                                "funding_amount_coverage": "unverified",
+                                "deadline": "unverified",
+                                "how_to_apply": "unverified",
+                                "evidence": {},
+                                "missing_information": [
+                                    f"Curated verification timed out after {CANDIDATE_TIMEOUT_SECONDS} seconds."
+                                ],
+                            }
+                        )
+
+                    ranked_opportunity.verified_data = verified_curated
+                    ranked_opportunity.name = verified_curated.name
+                    ranked_opportunity.provider = verified_curated.provider
+                    ranked_opportunity.country = verified_curated.country
+                    ranked_opportunity.official_url = verified_curated.official_url
+                    ranked_opportunity.degree_level = verified_curated.degree_level
+                    ranked_opportunity.funding = verified_curated.funding_amount_coverage
+                    ranked_opportunity.deadline = verified_curated.deadline
+                    ranked_opportunity.evidence = verified_curated.evidence
+                    ranked_opportunity.verification_mode = verified_curated.verification_mode
+                    ranked_opportunity.deadline_source_url = verified_curated.deadline_source_url
+                    ranked_opportunity.last_checked = verified_curated.last_checked
+                    verified.append(verified_curated)
             return {
                 "ranked_results": ranked_results,
                 "candidates": candidates,
