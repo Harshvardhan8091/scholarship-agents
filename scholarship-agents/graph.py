@@ -147,6 +147,7 @@ def create_scholarship_graph(
     async def ranker_node(state: PipelineState) -> Dict[str, Any]:
         bus = state.get("event_bus") or EventBus()
         verified = state.get("verified_opportunities", [])
+        candidates = state.get("candidates", [])
         profile = state.get("profile") or StudentProfile()
 
         try:
@@ -155,7 +156,52 @@ def create_scholarship_graph(
                 profile=profile,
                 event_bus=bus,
             )
-            return {"ranked_results": ranked_results}
+            if len(ranked_results.top_opportunities) < 5:
+                official_queries = [
+                    "site:daad.de DAAD master's scholarship international students",
+                    "site:sbfi.admin.ch Swiss Government Excellence Scholarship master's",
+                    "site:erasmus-plus.ec.europa.eu Erasmus Mundus master's scholarship",
+                    "site:chevening.org Chevening master's scholarship international students",
+                    "site:foreign.fulbrightonline.org Fulbright foreign student master's scholarship",
+                    "site:edu master's computer science international student funding scholarship",
+                ]
+                await bus.emit(
+                    agent="ResearchAgent",
+                    event_type="recovery",
+                    message="Fewer than five distinct open opportunities remain. Running one additional official-source research round.",
+                    details={"queries": official_queries},
+                )
+                new_candidates = await r_agent.run(
+                    profile=profile,
+                    event_bus=bus,
+                    round_index=settings.MAX_RESEARCH_ROUNDS + 1,
+                    existing_urls={candidate.official_url for candidate in candidates},
+                    query_override=official_queries,
+                )
+                candidates.extend(new_candidates)
+                known_urls = {opportunity.official_url for opportunity in verified}
+                candidates_to_verify = [
+                    candidate
+                    for candidate in new_candidates
+                    if candidate.official_url not in known_urls
+                ]
+                new_verified = await v_agent.run(
+                    candidates=candidates_to_verify,
+                    profile=profile,
+                    event_bus=bus,
+                )
+                verified.extend(new_verified)
+                ranked_results = await rk_agent.run(
+                    verified_opportunities=verified,
+                    profile=profile,
+                    event_bus=bus,
+                    allow_curated_fallback=True,
+                )
+            return {
+                "ranked_results": ranked_results,
+                "candidates": candidates,
+                "verified_opportunities": verified,
+            }
         except Exception as e:
             await bus.emit(
                 agent="RankerAgent",

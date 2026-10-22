@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+from datetime import date, datetime
+from difflib import SequenceMatcher
+import re
 from typing import List, Optional
+from urllib.parse import urlsplit, urlunsplit
 from config import settings
 from event_bus import EventBus
 from llm_client import LLMClient
@@ -9,14 +13,171 @@ from agents.research_agent import is_official_domain
 
 
 class RankerAgent:
+    THIRD_PARTY_DOMAINS = (
+        "experteducation",
+        "universityliving",
+        "profellow",
+        "expatrio",
+        "scholars4dev",
+        "studyportals",
+        "shiksha",
+        "leverageedu",
+        "collegedunia",
+    )
+    DEADLINE_CUTOFF = date(2026, 10, 21)
+
     def __init__(self, llm_client: Optional[LLMClient] = None):
         self.llm_client = llm_client or LLMClient()
+
+    @staticmethod
+    def _normalize_url(url: str) -> str:
+        parsed = urlsplit(url.strip())
+        return urlunsplit(
+            (parsed.scheme.lower(), parsed.netloc.lower(), parsed.path.lower().rstrip("/"), "", "")
+        )
+
+    @classmethod
+    def _is_third_party(cls, url: str) -> bool:
+        parsed = urlsplit(url.lower())
+        domain = parsed.netloc
+        return "/blog/" in f"/{parsed.path.strip('/')}/" or any(
+            blocked in domain for blocked in cls.THIRD_PARTY_DOMAINS
+        )
+
+    @classmethod
+    def _is_closed(cls, opportunity: VerifiedOpportunity) -> bool:
+        source_text = f"{opportunity.name} {opportunity.official_url}"
+        if any(int(year) < 2026 for year in re.findall(r"\b(?:19|20)\d{2}\b", source_text)):
+            return True
+        deadline = opportunity.deadline.strip()
+        if "closed for this cycle" in deadline.lower():
+            return True
+        match = re.search(r"\b\d{4}-\d{2}-\d{2}\b", deadline)
+        if match:
+            try:
+                return date.fromisoformat(match.group(0)) < cls.DEADLINE_CUTOFF
+            except ValueError:
+                return False
+        for fmt in ("%B %d, %Y", "%b %d, %Y", "%d %B %Y", "%d %b %Y"):
+            try:
+                return datetime.strptime(deadline, fmt).date() < cls.DEADLINE_CUTOFF
+            except ValueError:
+                continue
+        return False
+
+    @staticmethod
+    def _normalized_name(name: str) -> str:
+        return " ".join(re.findall(r"[a-z0-9]+", name.lower()))
+
+    @classmethod
+    def _same_name(cls, first: str, second: str) -> bool:
+        first_normalized = cls._normalized_name(first)
+        second_normalized = cls._normalized_name(second)
+        if not first_normalized or not second_normalized:
+            return False
+        if first_normalized == second_normalized:
+            return True
+        return SequenceMatcher(None, first_normalized, second_normalized).ratio() >= 0.9
+
+    @classmethod
+    def _dedupe_ranked(
+        cls, ranked: List[RankedOpportunity]
+    ) -> List[RankedOpportunity]:
+        kept: List[RankedOpportunity] = []
+        for opportunity in sorted(ranked, key=lambda item: item.fit_score, reverse=True):
+            if any(
+                cls._normalize_url(opportunity.official_url)
+                == cls._normalize_url(existing.official_url)
+                or cls._same_name(opportunity.name, existing.name)
+                for existing in kept
+            ):
+                continue
+            kept.append(opportunity)
+        return kept
+
+    def _heuristic_score(
+        self, opportunity: VerifiedOpportunity, profile: StudentProfile
+    ) -> float:
+        target_countries = [country.lower() for country in (profile.target_countries or [])]
+        target_degree = (profile.target_degree_level or "Master's").lower()
+        score = 50.0
+        if opportunity.match_status == "eligible":
+            score += 15.0
+        elif opportunity.match_status == "partially_eligible":
+            score += 8.0
+        if any(country in opportunity.country.lower() for country in target_countries):
+            score += 10.0
+        if is_official_domain(opportunity.official_url):
+            score += 10.0
+        text = f"{opportunity.name} {opportunity.provider}".lower()
+        if "master" in target_degree:
+            if "bachelor" in text or "undergraduate" in text:
+                score -= 30.0
+            elif "master" in text or "graduate" in text or "postgraduate" in text:
+                score += 8.0
+        elif "phd" in target_degree:
+            if "bachelor" in text or "undergraduate" in text:
+                score -= 30.0
+            elif "phd" in text or "doctoral" in text or "research" in text:
+                score += 8.0
+        if opportunity.funding_amount_coverage and "unverified" not in opportunity.funding_amount_coverage.lower():
+            score += 5.0
+        score += min(opportunity.confidence * 4.0, 4.0)
+        if opportunity.deadline and "unverified" in opportunity.deadline.lower():
+            score -= 8.0
+        elif opportunity.deadline and "closed" in opportunity.deadline.lower():
+            score -= 25.0
+        return score
+
+    @classmethod
+    def _curated_fallbacks(
+        cls, opportunities: List[VerifiedOpportunity]
+    ) -> List[VerifiedOpportunity]:
+        from agents.research_agent import CURATED_SCHOLARSHIPS
+
+        fallbacks: List[VerifiedOpportunity] = []
+        for item in CURATED_SCHOLARSHIPS:
+            if "master" not in item.get("degree_level", "").lower():
+                continue
+            url = item["official_url"]
+            if cls._is_third_party(url) or cls._is_closed(
+                VerifiedOpportunity(
+                    name=item["name"],
+                    provider=item["provider"],
+                    country=item["country"],
+                    official_url=url,
+                )
+            ):
+                continue
+            if any(
+                cls._normalize_url(existing.official_url) == cls._normalize_url(url)
+                or cls._same_name(existing.name, item["name"])
+                for existing in opportunities + fallbacks
+            ):
+                continue
+            fallbacks.append(
+                VerifiedOpportunity(
+                    name=item["name"],
+                    provider=item["provider"],
+                    country=item["country"],
+                    official_url=url,
+                    degree_level="Master's",
+                    discovery_source="curated_fallback",
+                    verification_mode="unverified",
+                    match_status="partially_eligible",
+                    unmet_criteria=["Curated fallback; not independently verified"],
+                    source_urls=[url],
+                )
+            )
+        return fallbacks
 
     async def run(
         self,
         verified_opportunities: List[VerifiedOpportunity],
         profile: StudentProfile,
         event_bus: EventBus,
+        *,
+        allow_curated_fallback: bool = False,
     ) -> RankedResults:
         await event_bus.emit(
             agent="RankerAgent",
@@ -24,18 +185,15 @@ class RankerAgent:
             message=f"Evaluating and ranking {len(verified_opportunities)} verified opportunities for student profile...",
         )
 
-        if not verified_opportunities:
-            await event_bus.emit(
-                agent="RankerAgent",
-                event_type="error",
-                message="No verified opportunities available to rank.",
-            )
-            return RankedResults(
-                top_opportunities=[],
-                total_candidates_found=0,
-                total_verified=0,
-                ranking_summary="No opportunities were found or verified.",
-            )
+        for opportunity in verified_opportunities:
+            if self._is_third_party(opportunity.official_url):
+                if "excluded: third-party" not in opportunity.unmet_criteria:
+                    opportunity.unmet_criteria.append("excluded: third-party")
+                opportunity.match_status = "aggregator_excluded"
+            elif self._is_closed(opportunity):
+                if "closed for this cycle" not in opportunity.unmet_criteria:
+                    opportunity.unmet_criteria.append("closed for this cycle")
+                opportunity.match_status = "ineligible"
 
         eligible_pool = [
             opportunity
@@ -45,11 +203,14 @@ class RankerAgent:
             and bool(opportunity.official_url.strip())
         ]
 
+        if allow_curated_fallback and len(eligible_pool) < 5:
+            eligible_pool.extend(self._curated_fallbacks(eligible_pool))
+
         if not eligible_pool:
             await event_bus.emit(
                 agent="RankerAgent",
-                event_type="recovery",
-                message="No candidates had page-supported Master's-level eligibility and an official source URL; refusing to rank unverified candidates.",
+                event_type="error",
+                message="No candidates had page-supported Master's-level eligibility and an official source URL.",
             )
             return RankedResults(
                 top_opportunities=[],
@@ -57,6 +218,8 @@ class RankerAgent:
                 total_verified=len(verified_opportunities),
                 ranking_summary="No opportunities met the verified Master's-level and official-source requirements.",
             )
+
+        eligible_pool = self._dedupe_verified(eligible_pool, profile)
 
         # If LLM configured, generate rankings and tailored reasoning
         if self.llm_client.is_configured:
@@ -71,6 +234,10 @@ class RankerAgent:
                 results = self._rank_heuristically(eligible_pool, profile)
         else:
             results = self._rank_heuristically(eligible_pool, profile)
+
+        results.top_opportunities = self._dedupe_ranked(results.top_opportunities)[:5]
+        for rank, opportunity in enumerate(results.top_opportunities, start=1):
+            opportunity.rank = rank
 
         results.total_verified = len(verified_opportunities)
 
@@ -88,6 +255,27 @@ class RankerAgent:
             },
         )
         return results
+
+    def _dedupe_verified(
+        self,
+        opportunities: List[VerifiedOpportunity],
+        profile: StudentProfile,
+    ) -> List[VerifiedOpportunity]:
+        kept: List[VerifiedOpportunity] = []
+        for opportunity in sorted(
+            opportunities,
+            key=lambda item: self._heuristic_score(item, profile),
+            reverse=True,
+        ):
+            if any(
+                self._normalize_url(opportunity.official_url)
+                == self._normalize_url(existing.official_url)
+                or self._same_name(opportunity.name, existing.name)
+                for existing in kept
+            ):
+                continue
+            kept.append(opportunity)
+        return kept
 
     async def _rank_with_llm(
         self,

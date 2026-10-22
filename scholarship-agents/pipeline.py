@@ -69,6 +69,10 @@ async def run_pipeline(
         "student_profile": profile_res.model_dump() if profile_res else None,
         "total_candidates": len(final_state.get("candidates", [])),
         "total_verified": len(final_state.get("verified_opportunities", [])),
+        "all_verified_opportunities": [
+            opportunity.model_dump()
+            for opportunity in final_state.get("verified_opportunities", [])
+        ],
         "ranked_results": ranked_res.model_dump() if ranked_res else None,
         "sop_draft": sop_res.model_dump() if sop_res else None,
         "llm_provider_calls": provider_counts,

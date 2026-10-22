@@ -237,3 +237,70 @@ async def test_ranker_only_includes_page_verified_masters():
         "Master of Science scholarship"
     ]
     assert results.top_opportunities[0].degree_level == "Master's"
+
+
+@pytest.mark.asyncio
+async def test_ranker_excludes_sources_and_deduplicates_before_curated_top_up():
+    class OfflineLLM:
+        is_configured = False
+
+    def opportunity(name, url, deadline="unverified"):
+        return VerifiedOpportunity(
+            name=name,
+            provider="Example University",
+            country="Germany",
+            official_url=url,
+            degree_level="Master's",
+            funding_amount_coverage="Full tuition",
+            deadline=deadline,
+            match_status="eligible",
+        )
+
+    duplicate_a = opportunity(
+        "Master Data Scholarship", "https://example.edu/award/?source=search"
+    )
+    duplicate_b = opportunity(
+        "Master Data Scholarship", "https://example.edu/award"
+    )
+    third_party = opportunity(
+        "Third-party scholarship", "https://experteducation.com/scholarship"
+    )
+    blog = opportunity("University blog award", "https://example.edu/blog/award")
+    old_cycle = opportunity(
+        "Scholarship 2025", "https://example.edu/scholarship/2025"
+    )
+    past_deadline = opportunity(
+        "Past scholarship", "https://example.edu/past", "2026-10-20"
+    )
+    candidates = [duplicate_a, duplicate_b, third_party, blog, old_cycle, past_deadline]
+
+    results = await RankerAgent(llm_client=OfflineLLM()).run(
+        candidates,
+        StudentProfile(target_degree_level="Master's"),
+        EventBus(print_to_terminal=False),
+        allow_curated_fallback=True,
+    )
+
+    assert len(results.top_opportunities) == 5
+    assert len(
+        [
+            item for item in results.top_opportunities
+            if item.name == "Master Data Scholarship"
+        ]
+    ) == 1
+    assert all(
+        not RankerAgent._is_third_party(item.official_url)
+        and not RankerAgent._is_closed(item.verified_data)
+        for item in results.top_opportunities
+    )
+    assert "excluded: third-party" in third_party.unmet_criteria
+    assert third_party.match_status == "aggregator_excluded"
+    assert "excluded: third-party" in blog.unmet_criteria
+    assert "closed for this cycle" in old_cycle.unmet_criteria
+    assert "closed for this cycle" in past_deadline.unmet_criteria
+    assert any(
+        item.discovery_source == "curated_fallback"
+        and item.deadline == "unverified"
+        and item.verification_mode == "unverified"
+        for item in results.top_opportunities
+    )

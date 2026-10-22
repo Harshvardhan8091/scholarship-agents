@@ -195,6 +195,7 @@ class ResearchAgent:
         event_bus: EventBus,
         round_index: int = 0,
         existing_urls: Optional[Set[str]] = None,
+        query_override: Optional[List[str]] = None,
     ) -> List[CandidateOpportunity]:
         is_retry = round_index > 0
         if is_retry:
@@ -211,7 +212,7 @@ class ResearchAgent:
                 message="Generating targeted scholarship search queries from student profile...",
             )
 
-        queries = await self._generate_queries(profile, round_index, event_bus)
+        queries = query_override or await self._generate_queries(profile, round_index, event_bus)
 
         await event_bus.emit(
             agent="ResearchAgent",
@@ -221,7 +222,9 @@ class ResearchAgent:
         )
 
         candidates: List[CandidateOpportunity] = []
-        seen_urls: Set[str] = set(existing_urls or [])
+        seen_urls: Set[str] = {
+            self._normalize_url(url) for url in (existing_urls or set())
+        }
 
         # Search via Tavily if configured
         if self._tavily is not None:
