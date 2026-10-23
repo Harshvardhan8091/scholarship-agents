@@ -46,6 +46,17 @@ async def test_index_serves_static_page(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_favicon_route_is_available():
+    response = await httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+    ).get("/favicon.ico")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("image/svg+xml")
+    assert "<svg" in response.text
+
+
+@pytest.mark.asyncio
 async def test_replay_endpoint_returns_demo_result(tmp_path, monkeypatch):
     result_file = tmp_path / "demo_result.json"
     result_file.write_text('{"run_mode":"LIVE"}', encoding="utf-8")

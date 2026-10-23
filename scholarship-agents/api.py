@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, Optional
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from event_bus import EventBus
@@ -82,6 +82,19 @@ async def index() -> FileResponse:
     if not STATIC_INDEX_PATH.is_file():
         raise HTTPException(status_code=404, detail="static/index.html was not found.")
     return FileResponse(STATIC_INDEX_PATH, media_type="text/html")
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon() -> Response:
+    return Response(
+        content=(
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
+            '<rect width="32" height="32" rx="7" fill="#12233f"/>'
+            '<path d="M7 9h18v2H7zm0 5h18v2H7zm0 5h12v2H7z" fill="#0f8b8d"/>'
+            "</svg>"
+        ),
+        media_type="image/svg+xml",
+    )
 
 
 @app.get("/api/replay")

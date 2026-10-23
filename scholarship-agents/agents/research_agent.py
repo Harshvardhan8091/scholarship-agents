@@ -16,6 +16,8 @@ OFFICIAL_DOMAINS_PATTERNS = [
     r"\.edu(?:\.[a-z]{2})?$",
     r"\.ac\.[a-z]{2}$",
     r"\.gov(?:\.[a-z]{2})?$",
+    r"(?:^|\.)gov\.[a-z]{2}$",
+    r"(?:^|\.)go\.jp$",
     r"(?:^|\.)daad\.de$",
     r"(?:^|\.)mext\.go\.jp$",
     r"(?:^|\.)chevening\.org$",

@@ -113,7 +113,7 @@ def test_env_loader_handles_bom_quotes_and_whitespace(tmp_path, monkeypatch):
 
     env_path = tmp_path / ".env"
     env_path.write_bytes(
-        b'\xef\xbb\xbfGROQ_API_KEY="  gsk_test_value  "\r\n'
+        b'\xef\xbb\xbfGROQ_API_KEY="  groq_test_value  "\r\n'
         b'GEMINI_API_KEY = \'   testgemini  \'\r\n'
         b'TAVILY_API_KEY= "  tvly_test  "\r\n'
         b'GROQ_MODEL = " openai/gpt-oss-120b "\r\n'
@@ -135,7 +135,7 @@ def test_env_loader_handles_bom_quotes_and_whitespace(tmp_path, monkeypatch):
 
     assert _sanitize_env_value('  "value"  ') == "value"
     assert _sanitize_env_value("\r\n  'value'\r\n") == "value"
-    assert os.environ["GROQ_API_KEY"] == "gsk_test_value"
+    assert os.environ["GROQ_API_KEY"] == "groq_test_value"
     assert os.environ["GEMINI_API_KEY"] == "testgemini"
     assert os.environ["TAVILY_API_KEY"] == "tvly_test"
     assert os.environ["GROQ_MODEL"] == "openai/gpt-oss-120b"

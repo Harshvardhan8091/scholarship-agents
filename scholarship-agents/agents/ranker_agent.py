@@ -24,8 +24,6 @@ class RankerAgent:
         "leverageedu",
         "collegedunia",
     )
-    DEADLINE_CUTOFF = date(2026, 10, 21)
-
     def __init__(self, llm_client: Optional[LLMClient] = None):
         self.llm_client = llm_client or LLMClient()
 
@@ -57,8 +55,12 @@ class RankerAgent:
 
     @classmethod
     def _is_closed(cls, opportunity: VerifiedOpportunity) -> bool:
+        today = date.today()
         source_text = f"{opportunity.name} {opportunity.official_url}"
-        if any(int(year) < 2026 for year in re.findall(r"\b(?:19|20)\d{2}\b", source_text)):
+        if any(
+            int(year) < today.year
+            for year in re.findall(r"\b(?:19|20)\d{2}\b", source_text)
+        ):
             return True
         deadline = opportunity.deadline.strip()
         if "closed for this cycle" in deadline.lower():
@@ -66,12 +68,12 @@ class RankerAgent:
         match = re.search(r"\b\d{4}-\d{2}-\d{2}\b", deadline)
         if match:
             try:
-                return date.fromisoformat(match.group(0)) < cls.DEADLINE_CUTOFF
+                return date.fromisoformat(match.group(0)) < today
             except ValueError:
                 return False
         for fmt in ("%B %d, %Y", "%b %d, %Y", "%d %B %Y", "%d %b %Y"):
             try:
-                return datetime.strptime(deadline, fmt).date() < cls.DEADLINE_CUTOFF
+                return datetime.strptime(deadline, fmt).date() < today
             except ValueError:
                 continue
         return False
@@ -204,6 +206,10 @@ class RankerAgent:
             elif self._is_third_party(opportunity.official_url):
                 if "excluded: third-party" not in opportunity.unmet_criteria:
                     opportunity.unmet_criteria.append("excluded: third-party")
+                opportunity.match_status = "aggregator_excluded"
+            elif not is_official_domain(opportunity.official_url):
+                if "excluded: non-official source" not in opportunity.unmet_criteria:
+                    opportunity.unmet_criteria.append("excluded: non-official source")
                 opportunity.match_status = "aggregator_excluded"
             elif self._is_closed(opportunity):
                 if "closed for this cycle" not in opportunity.unmet_criteria:

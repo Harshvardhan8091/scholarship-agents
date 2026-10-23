@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -191,6 +192,79 @@ async def test_verifier_rejects_answers_without_exact_page_evidence():
     assert verified.how_to_apply == "unverified"
     assert verified.required_documents == []
     assert set(verified.evidence) == {"degree_level", "deadline"}
+
+
+@pytest.mark.asyncio
+async def test_candidate_timeout_is_unverified_and_does_not_stop_other_candidates(monkeypatch):
+    import agents.verifier_agent as verifier_module
+
+    monkeypatch.setattr(verifier_module, "CANDIDATE_TIMEOUT_SECONDS", 0.01)
+    agent = VerifierAgent(llm_client=SimpleNamespace())
+
+    async def verify(candidate, profile, event_bus):
+        if candidate.name == "Slow award":
+            await asyncio.sleep(0.05)
+        return VerifiedOpportunity(
+            name=candidate.name,
+            provider=candidate.provider,
+            country=candidate.country,
+            official_url=candidate.official_url,
+            degree_level="Master's",
+            match_status="eligible",
+        )
+
+    monkeypatch.setattr(agent, "_verify_candidate", verify)
+    bus = EventBus(print_to_terminal=False)
+    candidates = [
+        CandidateOpportunity(
+            name="Slow award",
+            provider="Example",
+            country="Germany",
+            official_url="https://example.edu/slow",
+        ),
+        CandidateOpportunity(
+            name="Available award",
+            provider="Example",
+            country="Germany",
+            official_url="https://example.edu/available",
+        ),
+    ]
+
+    results = await agent.run(candidates, StudentProfile(), bus)
+
+    assert [result.match_status for result in results] == ["unverified", "eligible"]
+    assert any(event.type == "recovery" for event in bus.get_history())
+
+
+@pytest.mark.asyncio
+async def test_ranker_excludes_non_official_domains():
+    class OfflineLLM:
+        is_configured = False
+
+    results = await RankerAgent(llm_client=OfflineLLM()).run(
+        [
+            VerifiedOpportunity(
+                name="Official scholarship",
+                provider="University",
+                country="Germany",
+                official_url="https://university.example.edu/scholarship",
+                degree_level="Master's",
+                match_status="eligible",
+            ),
+            VerifiedOpportunity(
+                name="Unofficial scholarship",
+                provider="Unknown",
+                country="Germany",
+                official_url="https://random-info.example/scholarship",
+                degree_level="Master's",
+                match_status="eligible",
+            ),
+        ],
+        StudentProfile(target_degree_level="Master's"),
+        EventBus(print_to_terminal=False),
+    )
+
+    assert [item.name for item in results.top_opportunities] == ["Official scholarship"]
 
 
 def test_scholarship_directory_is_classified_as_aggregator():

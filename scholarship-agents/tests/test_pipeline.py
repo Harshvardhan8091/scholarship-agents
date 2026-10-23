@@ -152,20 +152,29 @@ async def test_ranker_and_writer_agents():
         achievements=["National AI Hackathon Winner 2024"],
         target_countries=["Germany", "Switzerland"],
     )
+    scholarship_names = [
+        "Computer Science Excellence Scholarship",
+        "Global Research Master's Fellowship",
+        "Applied Data Systems Award",
+        "International Engineering Graduate Grant",
+        "Digital Innovation Tuition Scholarship",
+        "Technology Leadership Funding Program",
+        "Academic Merit Graduate Award",
+    ]
     verified = [
         VerifiedOpportunity(
-            name=f"Scholarship {i}",
+            name=name,
             provider=f"University {i}",
             country="Germany" if i % 2 == 0 else "Switzerland",
             official_url=f"https://example.edu/scholarship/{i}",
             degree_level="Master's",
             funding_amount_coverage="Full tuition waiver + stipend",
-            deadline="March 31, 2025",
+            deadline="March 31, 2027",
             match_status="eligible",
             confidence=0.9,
             source_urls=[f"https://example.edu/scholarship/{i}"],
         )
-        for i in range(1, 8)
+        for i, name in enumerate(scholarship_names, start=1)
     ]
 
     ranker = RankerAgent()
@@ -193,6 +202,7 @@ async def test_full_pipeline_end_to_end():
 
     assert result["student_profile"] is not None
     assert result["total_candidates"] >= 10
+    assert len(result["all_candidates"]) == result["total_candidates"]
     assert result["total_verified"] >= 10
     assert result["ranked_results"] is not None
     assert len(result["ranked_results"]["top_opportunities"]) == 5
