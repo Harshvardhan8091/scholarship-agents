@@ -10,9 +10,9 @@ from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, Optional
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 
-from config import settings
 from event_bus import EventBus
 from models import PipelineEvent
 from pipeline import run_pipeline
@@ -35,6 +35,9 @@ app.add_middleware(
 # Global or session event bus broadcaster
 global_event_bus = EventBus(print_to_terminal=True)
 REPLAY_RESULT_PATH: Optional[Path] = None
+STATIC_INDEX_PATH = Path(__file__).resolve().parent / "static" / "index.html"
+DEMO_RESULT_PATH = Path(__file__).resolve().parent / "samples" / "demo_result.json"
+app.mount("/static", StaticFiles(directory=STATIC_INDEX_PATH.parent), name="static")
 
 
 def _load_replay_result() -> JSONResponse:
@@ -69,13 +72,31 @@ def _load_replay_result() -> JSONResponse:
 
 
 @app.get("/api/health")
-async def health_check() -> Dict[str, Any]:
-    return {
-        "status": "online",
-        "gemini_model": settings.GEMINI_MODEL,
-        "gemini_configured": bool(settings.GEMINI_API_KEY),
-        "tavily_configured": bool(settings.TAVILY_API_KEY),
-    }
+async def health_check() -> Dict[str, bool]:
+    startup_result = await run_startup_checks()
+    return {"live": bool(startup_result.get("llm_live"))}
+
+
+@app.get("/")
+async def index() -> FileResponse:
+    if not STATIC_INDEX_PATH.is_file():
+        raise HTTPException(status_code=404, detail="static/index.html was not found.")
+    return FileResponse(STATIC_INDEX_PATH, media_type="text/html")
+
+
+@app.get("/api/replay")
+async def replay_result() -> JSONResponse:
+    if not DEMO_RESULT_PATH.is_file():
+        raise HTTPException(status_code=404, detail="samples/demo_result.json was not found.")
+    try:
+        with DEMO_RESULT_PATH.open("r", encoding="utf-8") as result_file:
+            result = json.load(result_file)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unable to load samples/demo_result.json: {exc}",
+        ) from exc
+    return JSONResponse(content=result)
 
 
 @app.get("/api/events")

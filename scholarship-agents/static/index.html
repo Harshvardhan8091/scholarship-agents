@@ -1,0 +1,798 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Scholarship Research Desk</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #12233f;
+      --muted: #607087;
+      --paper: #f3f6fa;
+      --card: #fff;
+      --line: #d7e0eb;
+      --teal: #0f8b8d;
+      --teal-soft: #e0f3f1;
+      --amber: #d98324;
+      --amber-soft: #fff1dc;
+      --red: #b3372f;
+      --red-soft: #fde9e7;
+      --field: #f8fafc;
+      --console: #14243b;
+      --console-text: #e4edf8;
+      --focus: #1769aa;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --ink: #e7eef7;
+        --muted: #a9b7c9;
+        --paper: #111b2a;
+        --card: #1a2739;
+        --line: #34445a;
+        --teal: #53c2bc;
+        --teal-soft: #183d40;
+        --amber: #f0ad55;
+        --amber-soft: #49351f;
+        --red: #f17d73;
+        --red-soft: #482725;
+        --field: #142033;
+        --console: #0b1421;
+        --console-text: #e4edf8;
+        --focus: #78bafa;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font: 16px/1.55 "Segoe UI", system-ui, -apple-system, sans-serif;
+    }
+    button, input { font: inherit; }
+    button, a, input { -webkit-tap-highlight-color: transparent; }
+    :focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+    .shell { width: min(1160px, calc(100% - 36px)); margin: 0 auto; }
+    header { padding: 42px 0 26px; }
+    .eyebrow {
+      margin: 0 0 7px;
+      color: var(--teal);
+      font-size: 13px;
+      font-weight: 750;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+    h1, h2, h3 { font-family: Georgia, "Times New Roman", serif; }
+    h1 { max-width: 720px; margin: 0; font-size: clamp(34px, 5vw, 40px); line-height: 1.12; }
+    .lede { max-width: 680px; margin: 12px 0 0; color: var(--muted); }
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(280px, .82fr) minmax(0, 1.35fr);
+      gap: 20px;
+      align-items: start;
+      padding-bottom: 48px;
+    }
+    .stack { display: grid; gap: 18px; min-width: 0; }
+    .card {
+      min-width: 0;
+      padding: 22px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--card);
+    }
+    h2 { margin: 0 0 15px; font-size: 22px; line-height: 1.25; }
+    h3 { margin: 0; font-size: 19px; line-height: 1.3; }
+    .card-intro { margin: -7px 0 18px; color: var(--muted); font-size: 14px; }
+    .field { display: grid; gap: 7px; margin-bottom: 16px; }
+    .field label { font-size: 14px; font-weight: 700; }
+    .field input {
+      width: 100%;
+      min-height: 46px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--ink);
+      background: var(--field);
+    }
+    input[type="file"] { padding: 7px; font-size: 14px; }
+    input[type="file"]::file-selector-button {
+      min-height: 30px;
+      margin-right: 10px;
+      padding: 4px 10px;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      color: var(--ink);
+      background: var(--card);
+      cursor: pointer;
+    }
+    .actions { display: grid; gap: 10px; margin-top: 20px; }
+    .button {
+      display: inline-flex;
+      min-height: 46px;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 10px 15px;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      font-weight: 750;
+      text-align: center;
+      cursor: pointer;
+    }
+    .button-primary { color: #fff; background: #0f7779; }
+    .button-primary:hover { background: #0b6567; }
+    .button-secondary {
+      border-color: var(--line);
+      color: var(--ink);
+      background: var(--card);
+    }
+    .button:disabled { cursor: wait; opacity: .65; }
+    .mode {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border: 1px solid var(--line);
+      border-radius: 99px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: .04em;
+    }
+    .mode::before, .status-dot {
+      width: 9px;
+      height: 9px;
+      flex: 0 0 9px;
+      border-radius: 50%;
+      background: var(--muted);
+      content: "";
+    }
+    .mode.live { border-color: var(--teal); color: var(--teal); }
+    .mode.live::before { background: var(--teal); }
+    .mode.offline { border-color: var(--amber); color: var(--amber); }
+    .mode.offline::before { background: var(--amber); }
+    .input-heading {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .steps { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0; }
+    .step { position: relative; min-width: 0; text-align: center; }
+    .step:not(:last-child)::after {
+      position: absolute;
+      z-index: 0;
+      top: 15px;
+      left: calc(50% + 17px);
+      width: calc(100% - 34px);
+      border-top: 2px solid var(--line);
+      content: "";
+    }
+    .step-icon {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      width: 32px;
+      height: 32px;
+      place-items: center;
+      margin: 0 auto 7px;
+      border: 2px solid var(--line);
+      border-radius: 50%;
+      color: var(--muted);
+      background: var(--card);
+      font-size: 13px;
+      font-weight: 800;
+    }
+    .step-label { display: block; color: var(--muted); font-size: 12px; font-weight: 700; }
+    .step.working .step-icon { border-color: var(--teal); color: var(--teal); }
+    .step.working .step-icon::after {
+      position: absolute;
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--teal);
+      content: "";
+      animation: pulse 1.15s ease-in-out infinite;
+    }
+    .step.working .step-icon span { visibility: hidden; }
+    .step.done .step-icon { border-color: var(--teal); color: #fff; background: var(--teal); }
+    .step.done .step-icon span { font-size: 0; }
+    .step.done .step-icon span::before { content: "✓"; font-size: 15px; }
+    .step.recovered .step-icon { border-color: var(--amber); color: var(--amber); background: var(--amber-soft); }
+    .step.recovered .step-label { color: var(--amber); }
+    .pipeline-caption { margin: 17px 0 0; color: var(--muted); font-size: 13px; }
+    .console {
+      height: 220px;
+      overflow: auto;
+      padding: 13px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--console-text);
+      background: var(--console);
+      font: 13px/1.5 "Cascadia Code", Consolas, monospace;
+      overflow-wrap: anywhere;
+    }
+    .log-line { display: grid; grid-template-columns: 64px 1fr; gap: 8px; padding: 3px 0; }
+    .log-time { color: #a9b7c9; }
+    .log-recovery { color: #f0ad55; }
+    .log-error { color: #ff8980; }
+    .log-done { color: #62d1c6; }
+    .notice {
+      margin: 0 0 18px;
+      padding: 13px 15px;
+      border: 1px solid var(--teal);
+      border-radius: 8px;
+      color: var(--ink);
+      background: var(--teal-soft);
+      font-weight: 750;
+    }
+    .error-notice {
+      margin: 14px 0 0;
+      padding: 12px;
+      border: 1px solid var(--red);
+      border-radius: 8px;
+      color: var(--red);
+      background: var(--red-soft);
+      font-weight: 650;
+    }
+    .empty {
+      display: grid;
+      min-height: 190px;
+      place-items: center;
+      padding: 24px;
+      border: 1px dashed var(--line);
+      border-radius: 8px;
+      color: var(--muted);
+      text-align: center;
+    }
+    .empty strong { display: block; margin-bottom: 5px; color: var(--ink); font-family: Georgia, serif; font-size: 20px; }
+    .result-section { margin-top: 20px; }
+    .profile-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      margin: 0;
+    }
+    .profile-item { min-width: 0; padding: 11px; border: 1px solid var(--line); border-radius: 7px; }
+    .profile-item dt { color: var(--muted); font-size: 12px; font-weight: 750; text-transform: uppercase; letter-spacing: .04em; }
+    .profile-item dd { margin: 3px 0 0; overflow-wrap: anywhere; }
+    .opportunity-list { display: grid; gap: 13px; }
+    .opportunity { padding: 17px; border: 1px solid var(--line); border-radius: 9px; background: var(--card); }
+    .opportunity-top { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+    .rank { color: var(--teal); font-size: 13px; font-weight: 800; white-space: nowrap; }
+    .provider, .country { color: var(--muted); font-size: 13px; }
+    .badges { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 14px; }
+    .badge { padding: 3px 8px; border: 1px solid var(--line); border-radius: 99px; color: var(--muted); font-size: 11px; font-weight: 750; }
+    .badge-live { border-color: var(--teal); color: #087375; background: var(--teal-soft); }
+    .badge-fallback { color: var(--muted); background: var(--field); }
+    .opportunity-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .data-field { min-width: 0; }
+    .data-label { display: block; margin-bottom: 2px; color: var(--muted); font-size: 12px; font-weight: 750; }
+    .data-value { overflow-wrap: anywhere; }
+    .unverified { color: var(--muted); font-style: italic; }
+    .why { margin: 12px 0; }
+    details { margin-top: 10px; }
+    summary { min-height: 36px; color: var(--teal); font-weight: 750; cursor: pointer; }
+    .official-link {
+      display: inline-flex;
+      min-height: 42px;
+      align-items: center;
+      margin-top: 12px;
+      padding: 8px 12px;
+      border: 1px solid var(--teal);
+      border-radius: 7px;
+      color: var(--teal);
+      font-size: 14px;
+      font-weight: 750;
+      text-decoration: none;
+    }
+    .official-link:hover { background: var(--teal-soft); }
+    .document {
+      padding: clamp(19px, 4vw, 34px);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--field);
+      font-family: Georgia, "Times New Roman", serif;
+      line-height: 1.75;
+      overflow-wrap: anywhere;
+      white-space: pre-wrap;
+    }
+    .draft-banner {
+      margin-bottom: 14px;
+      padding: 10px 12px;
+      border: 1px solid var(--amber);
+      border-radius: 6px;
+      color: var(--ink);
+      background: var(--amber-soft);
+      font-family: "Segoe UI", system-ui, sans-serif;
+      font-size: 13px;
+      font-weight: 850;
+      letter-spacing: .04em;
+    }
+    .sop-actions { display: flex; flex-wrap: wrap; gap: 9px; margin-bottom: 12px; }
+    .sop-actions .button { min-height: 42px; }
+    .raw { margin-top: 20px; }
+    .raw pre {
+      max-height: 360px;
+      overflow: auto;
+      padding: 14px;
+      border-radius: 7px;
+      color: var(--console-text);
+      background: var(--console);
+      font-size: 12px;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    .fade-in { animation: appear .2s ease-out; }
+    footer { padding: 0 0 26px; color: var(--muted); font-size: 13px; }
+    @keyframes pulse { 50% { transform: scale(.68); opacity: .45; } }
+    @keyframes appear { from { opacity: 0; } to { opacity: 1; } }
+    @media (max-width: 800px) {
+      .layout { grid-template-columns: 1fr; }
+      header { padding-top: 30px; }
+    }
+    @media (max-width: 480px) {
+      .shell { width: min(100% - 24px, 1160px); }
+      .card { padding: 17px; }
+      .steps { gap: 3px; }
+      .step-label { font-size: 10px; }
+      .step:not(:last-child)::after { left: calc(50% + 15px); width: calc(100% - 30px); }
+      .profile-grid, .opportunity-fields { grid-template-columns: 1fr; }
+      .log-line { grid-template-columns: 52px 1fr; gap: 5px; font-size: 12px; }
+      .input-heading { align-items: center; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
+    }
+  </style>
+</head>
+<body>
+  <header class="shell">
+    <p class="eyebrow">Scholarship finder · research desk</p>
+    <h1>Find a path to your next degree.</h1>
+    <p class="lede">A careful, evidence-led search for scholarships and graduate opportunities, with sources and application details kept close at hand.</p>
+  </header>
+
+  <main class="shell layout">
+    <section class="card" aria-labelledby="input-title">
+      <div class="input-heading">
+        <h2 id="input-title">Your materials</h2>
+        <span id="mode-badge" class="mode" role="status">Checking mode</span>
+      </div>
+      <p class="card-intro">Upload your documents to give the research agents useful context.</p>
+      <form id="search-form">
+        <div class="field">
+          <label for="resume">Resume (PDF)</label>
+          <input id="resume" name="resume" type="file" accept=".pdf,application/pdf" required>
+        </div>
+        <div class="field">
+          <label for="marksheet">Marksheet (PDF or TXT)</label>
+          <input id="marksheet" name="marksheet" type="file" accept=".pdf,.txt,application/pdf,text/plain" required>
+        </div>
+        <div class="field">
+          <label for="github">GitHub username <span class="provider">(optional)</span></label>
+          <input id="github" name="github_username" type="text" autocomplete="username" placeholder="e.g. octocat">
+        </div>
+        <div class="actions">
+          <button id="submit-button" class="button button-primary" type="submit">Find scholarships</button>
+          <button id="demo-button" class="button button-secondary" type="button">Show saved demo run</button>
+        </div>
+        <p id="form-error" class="error-notice" role="alert" hidden></p>
+      </form>
+    </section>
+
+    <div class="stack">
+      <section class="card" aria-labelledby="pipeline-title">
+        <h2 id="pipeline-title">Research pipeline</h2>
+        <div class="steps" aria-label="Agent pipeline status">
+          <div class="step" data-agent="ProfileAgent"><span class="step-icon"><span>1</span></span><span class="step-label">Profile</span></div>
+          <div class="step" data-agent="ResearchAgent"><span class="step-icon"><span>2</span></span><span class="step-label">Research</span></div>
+          <div class="step" data-agent="VerifierAgent"><span class="step-icon"><span>3</span></span><span class="step-label">Verifier</span></div>
+          <div class="step" data-agent="RankerAgent"><span class="step-icon"><span>4</span></span><span class="step-label">Ranker</span></div>
+          <div class="step" data-agent="WriterAgent"><span class="step-icon"><span>5</span></span><span class="step-label">Writer</span></div>
+        </div>
+        <p class="pipeline-caption">Agent updates appear here as the run progresses.</p>
+      </section>
+      <section class="card" aria-labelledby="log-title">
+        <h2 id="log-title">Live activity</h2>
+        <div id="event-log" class="console" role="log" aria-live="polite" aria-relevant="additions text">
+          <div>Waiting for a research run…</div>
+        </div>
+      </section>
+    </div>
+
+    <section id="results" class="card" style="grid-column: 1 / -1" aria-labelledby="results-title">
+      <h2 id="results-title">Your research results</h2>
+      <div id="result-content">
+        <div class="empty"><div><strong>Your desk is ready.</strong>Upload a resume and marksheet to start.</div></div>
+      </div>
+    </section>
+  </main>
+  <footer class="shell">Review every opportunity and its official source before applying.</footer>
+
+  <script>
+    (() => {
+      "use strict";
+      const CFG = Object.freeze({
+        apiBase: "",
+        resumeField: "resume",
+        marksheetField: "marksheet",
+        githubField: "github_username"
+      });
+      const agentNames = ["ProfileAgent", "ResearchAgent", "VerifierAgent", "RankerAgent", "WriterAgent"];
+      const modeBadge = document.getElementById("mode-badge");
+      const form = document.getElementById("search-form");
+      const submitButton = document.getElementById("submit-button");
+      const formError = document.getElementById("form-error");
+      const log = document.getElementById("event-log");
+      const resultContent = document.getElementById("result-content");
+      let currentResult = null;
+
+      function setStep(agent, state) {
+        const step = document.querySelector(`.step[data-agent="${agent}"]`);
+        if (!step) return;
+        step.classList.remove("working", "done", "recovered");
+        if (state) step.classList.add(state);
+      }
+
+      function resetSteps() {
+        agentNames.forEach((agent) => setStep(agent, ""));
+      }
+
+      function addLog(event) {
+        if (log.children.length === 1 && log.firstElementChild.textContent.startsWith("Waiting for")) {
+          log.replaceChildren();
+        }
+        const row = document.createElement("div");
+        row.className = "log-line";
+        if (event.type === "recovery") row.classList.add("log-recovery");
+        if (event.type === "error") row.classList.add("log-error");
+        if (event.type === "done") row.classList.add("log-done");
+        const time = document.createElement("span");
+        time.className = "log-time";
+        time.textContent = event.timestamp ? new Date(event.timestamp).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", second: "2-digit"}) : new Date().toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", second: "2-digit"});
+        const text = document.createElement("span");
+        const icon = event.type === "recovery" ? "⚠ " : event.type === "error" ? "✕ " : event.type === "done" ? "✓ " : "";
+        text.textContent = `${icon}${event.agent || "Agent"} · ${event.message || ""}`;
+        row.append(time, text);
+        log.append(row);
+        log.scrollTop = log.scrollHeight;
+      }
+
+      function handleEvent(event) {
+        let data;
+        try { data = JSON.parse(event.data); } catch { return; }
+        if (!data || !data.agent || !data.type || !data.message) return;
+        addLog(data);
+        const agent = data.agent === "Orchestrator" && data.type === "started" ? "ProfileAgent" : data.agent;
+        if (data.type === "started") setStep(agent, "working");
+        else if (data.type === "progress") {
+          const step = document.querySelector(`.step[data-agent="${agent}"]`);
+          if (step && !step.classList.contains("done")) setStep(agent, "working");
+        } else if (data.type === "recovery") setStep(agent, "recovered");
+        else if (data.type === "done") setStep(agent, "done");
+        else if (data.type === "error") setStep(agent, "recovered");
+        if (data.agent === "Orchestrator" && data.type === "done") {
+          agentNames.forEach((name) => setStep(name, "done"));
+        }
+      }
+
+      const eventSource = new EventSource(`${CFG.apiBase}/api/events`);
+      ["started", "progress", "recovery", "done", "error"].forEach((type) => {
+        eventSource.addEventListener(type, handleEvent);
+      });
+
+      async function refreshHealth() {
+        try {
+          const response = await fetch(`${CFG.apiBase}/api/health`);
+          if (!response.ok) throw new Error(`Health request failed (${response.status})`);
+          const data = await response.json();
+          const live = data.live === true;
+          modeBadge.textContent = live ? "LIVE MODE" : "OFFLINE";
+          modeBadge.classList.toggle("live", live);
+          modeBadge.classList.toggle("offline", !live);
+        } catch {
+          modeBadge.textContent = "MODE UNKNOWN";
+          modeBadge.classList.add("offline");
+        }
+      }
+
+      function showField(label, value, tooltip = "The agents could not confirm this on the official page.") {
+        const wrapper = document.createElement("div");
+        wrapper.className = "data-field";
+        const labelNode = document.createElement("span");
+        labelNode.className = "data-label";
+        labelNode.textContent = label;
+        const valueNode = document.createElement("span");
+        valueNode.className = "data-value";
+        const isUnknown = value === null || value === undefined || value === "" ||
+          (typeof value === "string" && value.trim().toLowerCase() === "unverified");
+        if (isUnknown) {
+          valueNode.classList.add("unverified");
+          valueNode.textContent = "unverified";
+          valueNode.title = tooltip;
+        } else {
+          valueNode.textContent = Array.isArray(value) ? (value.length ? value.join(", ") : "unverified") : String(value);
+          if (valueNode.textContent === "unverified") {
+            valueNode.classList.add("unverified");
+            valueNode.title = tooltip;
+          }
+        }
+        wrapper.append(labelNode, valueNode);
+        return wrapper;
+      }
+
+      function addProfile(profile, parent) {
+        const section = document.createElement("section");
+        section.className = "result-section";
+        const heading = document.createElement("h3");
+        heading.textContent = "Student profile";
+        const grid = document.createElement("dl");
+        grid.className = "profile-grid";
+        const fields = [
+          ["Name", profile.name], ["Current degree", profile.degree], ["Field", profile.field],
+          ["CGPA", profile.cgpa], ["Target level", profile.target_degree_level],
+          ["Target countries", profile.target_countries], ["Missing information", profile.gaps_or_missing_info]
+        ];
+        fields.forEach(([label, value]) => {
+          const item = document.createElement("div");
+          item.className = "profile-item";
+          const dt = document.createElement("dt");
+          dt.textContent = label;
+          const dd = document.createElement("dd");
+          const unknown = value === null || value === undefined || value === "" || (Array.isArray(value) && value.length === 0);
+          if (unknown) {
+            dd.className = "unverified";
+            dd.textContent = "unverified";
+            dd.title = "The agents could not confirm this on the official page.";
+          } else {
+            dd.textContent = Array.isArray(value) ? value.join(", ") : String(value);
+          }
+          item.append(dt, dd);
+          grid.append(item);
+        });
+        section.append(heading, grid);
+        parent.append(section);
+      }
+
+      function addOpportunity(opportunity, parent) {
+        const card = document.createElement("article");
+        card.className = "opportunity";
+        const top = document.createElement("div");
+        top.className = "opportunity-top";
+        const titleBlock = document.createElement("div");
+        const title = document.createElement("h3");
+        const hasTitle = Boolean(opportunity.name) && String(opportunity.name).toLowerCase() !== "unverified";
+        title.textContent = hasTitle ? opportunity.name : "unverified";
+        if (!hasTitle) {
+          title.className = "unverified";
+          title.title = "The agents could not confirm this on the official page.";
+        }
+        const provider = document.createElement("div");
+        provider.className = "provider";
+        const hasProvider = Boolean(opportunity.provider) && String(opportunity.provider).toLowerCase() !== "unverified";
+        provider.textContent = hasProvider ? opportunity.provider : "unverified";
+        if (!hasProvider) {
+          provider.classList.add("unverified");
+          provider.title = "The agents could not confirm this on the official page.";
+        }
+        titleBlock.append(title, provider);
+        const rank = document.createElement("span");
+        rank.className = "rank";
+        rank.textContent = `RANK ${opportunity.rank ?? "—"}`;
+        top.append(titleBlock, rank);
+
+        const badges = document.createElement("div");
+        badges.className = "badges";
+        const verification = document.createElement("span");
+        const isLive = opportunity.verification_mode === "llm_live";
+        const verificationValue = opportunity.verification_mode;
+        const hasVerification = Boolean(verificationValue) && String(verificationValue).toLowerCase() !== "unverified";
+        verification.className = `badge${isLive ? " badge-live" : ""}${hasVerification ? "" : " unverified"}`;
+        verification.textContent = hasVerification ? verificationValue : "unverified";
+        if (!hasVerification) verification.title = "The agents could not confirm this on the official page.";
+        badges.append(verification);
+        const source = document.createElement("span");
+        source.className = "badge badge-fallback";
+        const sourceValue = opportunity.discovery_source;
+        source.textContent = sourceValue || "unverified";
+        if (!sourceValue) {
+          source.classList.add("unverified");
+          source.title = "The agents could not confirm this on the official page.";
+        }
+        badges.append(source);
+
+        const fields = document.createElement("div");
+        fields.className = "opportunity-fields";
+        fields.append(showField("Country", opportunity.country));
+        fields.append(showField("Funding", opportunity.funding));
+        fields.append(showField("Deadline", opportunity.deadline));
+        fields.append(showField("Eligibility", (opportunity.verified_data || {}).eligibility));
+
+        const why = showField("Why it fits", opportunity.reasoning);
+        why.classList.add("why");
+        const details = document.createElement("details");
+        const summary = document.createElement("summary");
+        summary.textContent = "How to apply";
+        const steps = document.createElement("div");
+        const stepData = opportunity.application_steps || [];
+        const verifiedHowTo = (opportunity.verified_data || {}).how_to_apply;
+        const hasApplySteps = stepData.length && !stepData.every(
+          (step) => !step || String(step).trim().toLowerCase() === "unverified"
+        );
+        if (hasApplySteps) {
+          steps.textContent = stepData.join("\n");
+        } else {
+          const unknown = showField("Application steps", verifiedHowTo);
+          steps.append(unknown);
+        }
+        details.append(summary, steps);
+        const link = document.createElement("a");
+        link.className = "official-link";
+        link.textContent = "Open official page ↗";
+        link.href = opportunity.official_url || "#";
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        if (!opportunity.official_url) {
+          link.removeAttribute("target");
+          link.classList.add("unverified");
+          link.textContent = "Official page unverified";
+        }
+        card.append(top, badges, fields, why, details, link);
+        parent.append(card);
+      }
+
+      function renderResult(data, replay = false) {
+        currentResult = data;
+        const container = document.createElement("div");
+        container.className = "fade-in";
+        if (replay || data.run_mode === "REPLAY") {
+          const banner = document.createElement("div");
+          banner.className = "notice";
+          banner.textContent = "REPLAY: this is a saved earlier run, not a live one.";
+          container.append(banner);
+        }
+        if (data.student_profile) addProfile(data.student_profile, container);
+
+        const opportunitySection = document.createElement("section");
+        opportunitySection.className = "result-section";
+        const opportunityHeading = document.createElement("h3");
+        opportunityHeading.textContent = "Ranked opportunities";
+        const list = document.createElement("div");
+        list.className = "opportunity-list";
+        const opportunities = (data.ranked_results || {}).top_opportunities || [];
+        if (opportunities.length) {
+          opportunities.forEach((opportunity) => addOpportunity(opportunity, list));
+        } else {
+          const empty = document.createElement("p");
+          empty.className = "unverified";
+          empty.textContent = "No ranked opportunities were returned.";
+          list.append(empty);
+        }
+        opportunitySection.append(opportunityHeading, list);
+        container.append(opportunitySection);
+
+        const sop = data.sop_draft;
+        if (sop && sop.sop_markdown) {
+          const sopSection = document.createElement("section");
+          sopSection.className = "result-section";
+          const sopHeading = document.createElement("h3");
+          sopHeading.textContent = "Statement of purpose";
+          const actions = document.createElement("div");
+          actions.className = "sop-actions";
+          const copy = document.createElement("button");
+          copy.className = "button button-secondary";
+          copy.type = "button";
+          copy.textContent = "Copy";
+          copy.addEventListener("click", async () => {
+            try {
+              await navigator.clipboard.writeText(sop.sop_markdown);
+              copy.textContent = "Copied";
+              setTimeout(() => { copy.textContent = "Copy"; }, 1600);
+            } catch {
+              copy.textContent = "Copy unavailable";
+            }
+          });
+          const download = document.createElement("button");
+          download.className = "button button-secondary";
+          download.type = "button";
+          download.textContent = "Download .txt";
+          download.addEventListener("click", () => {
+            const blob = new Blob([sop.sop_markdown], {type: "text/plain;charset=utf-8"});
+            const url = URL.createObjectURL(blob);
+            const anchor = document.createElement("a");
+            anchor.href = url;
+            anchor.download = "statement-of-purpose-draft.txt";
+            anchor.click();
+            URL.revokeObjectURL(url);
+          });
+          actions.append(copy, download);
+          const draft = document.createElement("div");
+          draft.className = "document";
+          const warning = document.createElement("div");
+          warning.className = "draft-banner";
+          warning.textContent = "DRAFT - nothing has been submitted";
+          const body = document.createElement("div");
+          body.textContent = sop.sop_markdown;
+          draft.append(warning, body);
+          sopSection.append(sopHeading, actions, draft);
+          container.append(sopSection);
+        }
+
+        const raw = document.createElement("details");
+        raw.className = "raw";
+        const rawSummary = document.createElement("summary");
+        rawSummary.textContent = "Raw result data";
+        const pre = document.createElement("pre");
+        pre.textContent = JSON.stringify(data, null, 2);
+        raw.append(rawSummary, pre);
+        container.append(raw);
+        resultContent.replaceChildren(container);
+        document.getElementById("results").scrollIntoView({behavior: "smooth", block: "start"});
+      }
+
+      async function responseJson(response) {
+        const text = await response.text();
+        let data;
+        try { data = text ? JSON.parse(text) : {}; } catch { throw new Error("The server returned an invalid JSON response."); }
+        if (!response.ok) {
+          const detail = data.detail || data.message || `Request failed (${response.status})`;
+          throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+        }
+        return data;
+      }
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        formError.hidden = true;
+        formError.textContent = "";
+        const resume = document.getElementById("resume").files[0];
+        const marksheet = document.getElementById("marksheet").files[0];
+        if (!resume || !marksheet) {
+          formError.textContent = "Please choose both a resume and a marksheet.";
+          formError.hidden = false;
+          return;
+        }
+        const payload = new FormData();
+        payload.append(CFG.resumeField, resume);
+        payload.append(CFG.marksheetField, marksheet);
+        const github = document.getElementById("github").value.trim();
+        if (github) payload.append(CFG.githubField, github);
+        submitButton.disabled = true;
+        submitButton.textContent = "Agents working...";
+        resetSteps();
+        log.replaceChildren();
+        addLog({agent: "Desk", type: "started", message: "Your research request has started."});
+        try {
+          const response = await fetch(`${CFG.apiBase}/api/find-scholarships`, {method: "POST", body: payload});
+          const result = await responseJson(response);
+          renderResult(result, result.run_mode === "REPLAY");
+        } catch (error) {
+          formError.textContent = `We could not complete the request: ${error.message}`;
+          formError.hidden = false;
+          addLog({agent: "Desk", type: "error", message: error.message});
+        } finally {
+          submitButton.disabled = false;
+          submitButton.textContent = "Find scholarships";
+          refreshHealth();
+        }
+      });
+
+      document.getElementById("demo-button").addEventListener("click", async () => {
+        formError.hidden = true;
+        try {
+          const result = await responseJson(await fetch(`${CFG.apiBase}/api/replay`));
+          renderResult(result, true);
+        } catch (error) {
+          formError.textContent = `Could not load the saved demo: ${error.message}`;
+          formError.hidden = false;
+        }
+      });
+
+      refreshHealth();
+    })();
+  </script>
+</body>
+</html>
