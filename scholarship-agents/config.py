@@ -43,17 +43,23 @@ load_project_env(PROJECT_ROOT / ".env", override=True)
 
 
 class Settings:
-    LLM_PROVIDERS: str = _sanitize_env_value(os.getenv("LLM_PROVIDERS", "groq,gemini"))
+    LLM_PROVIDERS: str = _sanitize_env_value(
+        os.getenv("LLM_PROVIDERS", "groq,gemini")
+    ) or "groq,gemini"
     GROQ_API_KEY: str = _sanitize_env_value(os.getenv("GROQ_API_KEY", ""))
-    GROQ_MODEL: str = _sanitize_env_value(os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"))
+    GROQ_MODEL: str = _sanitize_env_value(
+        os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+    ) or "openai/gpt-oss-120b"
     GROQ_MODEL_FALLBACKS: str = _sanitize_env_value(
-        os.getenv("GROQ_MODEL_FALLBACKS", "")
-    )
+        os.getenv("GROQ_MODEL_FALLBACKS", "openai/gpt-oss-20b")
+    ) or "openai/gpt-oss-20b"
     GEMINI_API_KEY: str = _sanitize_env_value(os.getenv("GEMINI_API_KEY", ""))
-    GEMINI_MODEL: str = _sanitize_env_value(os.getenv("GEMINI_MODEL", "gemini-2.5-flash"))
+    GEMINI_MODEL: str = _sanitize_env_value(
+        os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    ) or "gemini-2.5-flash"
     GEMINI_MODEL_FALLBACKS: str = _sanitize_env_value(
         os.getenv("GEMINI_MODEL_FALLBACKS", "gemini-2.5-flash,gemini-2.0-flash")
-    )
+    ) or "gemini-2.5-flash,gemini-2.0-flash"
     TAVILY_API_KEY: str = _sanitize_env_value(os.getenv("TAVILY_API_KEY", ""))
     GITHUB_TOKEN: str = _sanitize_env_value(os.getenv("GITHUB_TOKEN", ""))
 

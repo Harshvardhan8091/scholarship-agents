@@ -1,216 +1,109 @@
-# 🎓 AI Scholarship & University Program Finder
+# Scholarship Research Desk
 
-A robust, production-grade autonomous multi-agent system built with **Python 3.11+**, **LangGraph**, **OpenAI-compatible Groq + Google Gemini (`google-genai` SDK)**, and **FastAPI**. 
+Scholarship Research Desk is a Python 3.11+ project for exploring scholarships and graduate funding from a student resume, marksheet, and optional GitHub username. FastAPI serves a plain HTML/CSS/JavaScript interface and API; LangGraph coordinates the agents; Tavily provides web search when configured; Groq and Gemini can provide LLM calls.
 
-Given a student's resume PDF, academic transcript/marksheet (PDF or plain text), and GitHub profile, a coordinated team of specialized AI agents searches the live internet for authentic scholarships, verifies eligibility criteria against official web pages, ranks the top 5 matches, and drafts a personalized, strictly-grounded Statement of Purpose (SOP).
+Recommendations are research leads, not admissions decisions. Page evidence is retained with verified fields, uncertain fields stay `unverified`, and application materials are drafts only. The program never submits an application.
 
----
-
-## 🌟 Key Features
-
-- **Zero Hardcoding**: Evaluates any student profile dynamically. Tested across arbitrary degree disciplines and geographies.
-- **Strict Grounding & Verification**: Never invents scholarships, deadlines, or student achievements. Every single verified opportunity links to an official source URL.
-- **Full Failure Recovery & Self-Healing**:
-  - **Provider Fallback**: Ordered LLM fallback via `LLM_PROVIDERS` (`groq,gemini` by default), with automatic switch on 429/quota/timeout and invalid JSON.
-  - **LLM Invalid JSON**: 3-stage iterative feedback loop feeding back exact parse errors to the model.
-  - **Web Scraping Timeouts / SSL / Cloudflare Blocks**: Automatic backoff retry, fallback to contextual search snippet data, or explicit tagging as `"unverified"` without crashing.
-  - **Insufficient Candidate Recovery**: If fewer than 10 candidates qualify after verification, the orchestrator triggers an automatic recovery loop broadening the search scope (up to 2 additional rounds).
-- **Asynchronous Event Streaming**: Emits structured pipeline events (`agent`, `type: started|progress|recovery|done|error`, `message`, `timestamp`, `details`) through an async event bus ready for SSE streaming via FastAPI and terminal visualization with Rich.
-- **Draft Guarantee**: SOP outputs are explicitly marked with prominent draft warnings and include an audit trail of grounded profile facts.
-
----
-
-## 🏗️ Architecture
+## Architecture
 
 ```mermaid
 flowchart TD
-    subgraph Inputs
-        R[Resume PDF]
-        M[Marksheet PDF / TXT]
-        G[GitHub Username]
-    end
-
-    subgraph Agents
-        PA[ProfileAgent]
-        RA[ResearchAgent]
-        VA[VerifierAgent]
-        RKA[RankerAgent]
-        WA[WriterAgent]
-    end
-
-    subgraph "Failure Recovery Loops"
-        EB[Async Event Bus]
-        LOOP{Verified >= 10 or Max Rounds?}
-    end
-
-    R --> PA
-    M --> PA
-    G --> PA
-
-    PA -->|Structured StudentProfile| RA
-    RA -->|10-15 Candidate Opportunities| VA
-    VA -->|Verified Opportunities| LOOP
-    LOOP -- "< 10 Candidates (Max 2 Retries)" -->|Recovery: Broader Queries| RA
-    LOOP -- ">= 10 or Max Rounds" --> RKA
-    RKA -->|Top 5 Ranked Matches| WA
-    WA -->|Draft Statement of Purpose| OUT[output/result.json]
-
-    PA -.->|Emit Events| EB
-    RA -.->|Emit Events| EB
-    VA -.->|Emit Events| EB
-    RKA -.->|Emit Events| EB
-    WA -.->|Emit Events| EB
+    R[Resume PDF] --> API[FastAPI or CLI]
+    M[Marksheet PDF or TXT] --> API
+    G[Optional GitHub username] --> API
+    API --> P[ProfileAgent]
+    P -->|StudentProfile| S[ResearchAgent]
+    S <-->|Queries and results| T[Tavily Search]
+    S -->|Unique candidate URLs| V[VerifierAgent]
+    V <-->|Official page fetch and evidence| WEB[Official scholarship pages]
+    V -->|Verified or explicitly unverified fields| Q{Enough eligible candidates or research limit reached?}
+    Q -->|No| S
+    Q -->|Yes| K[RankerAgent]
+    K -->|At most five distinct recommendations| W[WriterAgent]
+    W --> D[Statement-of-purpose draft]
+    P -. LLM calls .-> L[LLMClient: configured Groq/Gemini provider and model fallbacks]
+    V -. LLM calls .-> L
+    K -. LLM calls .-> L
+    W -. LLM calls .-> L
+    L --> C[(LLM response cache)]
+    V --> PC[(Fetched-page cache)]
+    P -. status events .-> E[EventBus]
+    S -. status events .-> E
+    V -. status events .-> E
+    K -. status events .-> E
+    W -. status events .-> E
+    E --> SSE[GET /api/events SSE]
+    E --> CLI[Rich CLI output]
+    API --> UI[static/index.html]
+    UI -->|Multipart upload and replay| API
 ```
 
----
+`agents/` contains the five agents. The supporting modules (`config.py`, `models.py`, `llm_client.py`, `event_bus.py`, `page_cache.py`, and `startup_check.py`) remain at the repository root because existing imports depend on those paths; no `core/` package move is needed.
 
-## 🤖 Agents Breakdown
+## Agent roles and recovery
 
-| Agent | Module | Responsibilities |
-|---|---|---|
-| **ProfileAgent** | `agents/profile_agent.py` | Extracts raw text from Resume (PDF via `pypdf`) and Marksheet (PDF or TXT). Queries GitHub REST API for repositories, top languages, and stars. Synthesizes a structured `StudentProfile` JSON. Leaves unknown fields as `null`. |
-| **ResearchAgent** | `agents/research_agent.py` | Formulates targeted queries based on student's field, degree, and target countries. Queries Tavily API, performs deduplication, and returns 10–15 candidate opportunities with official URLs. |
-| **VerifierAgent** | `agents/verifier_agent.py` | Fetches live web pages in parallel using bounded concurrency (`asyncio.Semaphore`). Extracts page text using `trafilatura` (falling back to `BeautifulSoup`). Audits eligibility, funding, deadlines, and requirements against student profile. Sets unverified fields to `"unverified"`. |
-| **RankerAgent** | `agents/ranker_agent.py` | Scores verified opportunities on academic fit, funding coverage, deadline feasibility, and confidence. Selects and ranks the **Top 5** opportunities with personalized reasoning and application steps. |
-| **WriterAgent** | `agents/writer_agent.py` | Drafts a comprehensive Statement of Purpose tailored to the chosen program. Uses **ONLY** verified facts from the student profile (no hallucinations) and marks document prominently as `[DRAFT - FOR STUDENT REVIEW ONLY]`. |
-| **Orchestrator** | `graph.py` | LangGraph `StateGraph` managing state transitions, conditional edges, retry loops, and event emission. |
+| Agent | Responsibility |
+| --- | --- |
+| Profile | Extracts resume and marksheet text, optionally enriches it from a public GitHub profile, and returns a structured student profile. |
+| Research | Builds queries from the student's field, target degree, and target countries; searches Tavily when configured and supplements sparse results from a curated list. |
+| Verifier | Fetches candidate pages, follows an official link when it can recover one from an aggregator, and accepts field values only when a fetched-page evidence snippet supports them. |
+| Ranker | Excludes recognized third-party, non-official, news/announcement, and closed-cycle results; deduplicates URLs and similar names; ranks up to five candidates. |
+| Writer | Produces a statement-of-purpose draft grounded in the available student profile and selected opportunity. |
 
----
+The LLM client follows the configured `LLM_PROVIDERS` order (Groq and Gemini), including configured model fallbacks. Provider errors such as rate limits can trigger recovery and a provider/model switch; agents have deterministic or explicit unverified fallbacks. Verifier work is bounded to ten candidates per pass and 40 seconds per candidate. A failed or timed-out candidate is retained as unverified and does not stop the other candidates. Fetched pages and LLM responses are cached under ignored `cache/`.
 
-## 🛠️ Tech Stack
+Some facts cannot be confirmed from pages and remain `unverified`; search snippets alone are not verification evidence. Curated fallbacks are not treated as live verification. Official-domain recognition is rule-based and may miss legitimate institutions or sites, so review each linked source. Eligibility and deadlines can change after a run.
 
-- **Runtime**: Python 3.11+
-- **Orchestration**: LangGraph
-- **LLM**: OpenAI-compatible Groq and Google Gemini via `openai` + `google-genai` SDK (`GROQ_MODEL` / `GEMINI_MODEL`)
-- **Web Search**: Tavily Search API (`tavily-python`)
-- **Document & Web Parsing**: `pypdf`, `httpx`, `trafilatura`, `beautifulsoup4`
-- **Backend API**: FastAPI, Uvicorn, Server-Sent Events (SSE)
-- **Validation**: Pydantic v2
-- **Terminal UI**: Rich
+Research adapts its search terms and country alignment to extracted profile fields, degree level, and target countries rather than assuming one student. When a profile has limited matching sources, broader or curated international opportunities can still appear; inspect the country and eligibility evidence before acting. The bundled computer science, mechanical engineering (lower CGPA), and commerce profiles were run offline here: their top fives varied by profile, with some overlap from broad global fallback sources.
 
----
+## Setup
 
-## 🚀 Setup & Installation
+From the project folder in PowerShell:
 
-### 1. Clone & Set Up Virtual Environment
-
-```bash
-cd scholarship-agents
-uv venv --python 3.11 .venv
-# On Windows:
-.venv\Scripts\activate
-# On Linux / macOS:
-source .venv/bin/activate
+```powershell
+.\.venv\Scripts\python.exe -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+Copy-Item .env.example .env
 ```
 
-### 2. Install Dependencies
+Add credentials only to your local `.env`; never commit or share it. Credential names are `GROQ_API_KEY`, `GEMINI_API_KEY`, and `TAVILY_API_KEY`; `GITHUB_TOKEN` is optional. Optional provider/model configuration names are `LLM_PROVIDERS`, `GROQ_MODEL`, `GROQ_MODEL_FALLBACKS`, `GEMINI_MODEL`, and `GEMINI_MODEL_FALLBACKS`. Runtime tuning names are `LLM_CONCURRENCY`, `VERIFIER_CONCURRENCY`, `MAX_LLM_RETRIES`, `MAX_RESEARCH_ROUNDS`, and `REQUEST_TIMEOUT`. Defaults are provided in `config.py`.
 
-```bash
-uv pip install -r requirements.txt
-# or standard pip:
-pip install -r requirements.txt
+## Run the website and API
+
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn api:app --port 8000
 ```
 
-### 3. Configure Environment Variables
+Open <http://localhost:8000>. The main routes are:
 
-Copy `.env.example` to `.env`:
+| Route | Behavior |
+| --- | --- |
+| `GET /` | Serves the research desk. |
+| `GET /api/health` | Returns `{"live": bool}`; `live` reflects whether an LLM provider answered the startup check. |
+| `GET /api/events` | Streams JSON `PipelineEvent` messages through SSE, including `started`, `progress`, `recovery`, `done`, and `error`. The event bus is process-global; streams are not isolated by run. |
+| `GET /api/replay` | Returns `samples/demo_result.json`; the page visibly labels it as a replay. |
+| `POST /api/find-scholarships` | Accepts multipart fields `resume`, `marksheet`, `github_username`, and optional `pick` (defaults to 1). |
 
-```bash
-cp .env.example .env
+## Run the CLI
+
+```powershell
+.\.venv\Scripts\python.exe run_cli.py --resume samples/sample_resume.pdf --marksheet samples/sample_marksheet.pdf --github alexrivera-dev --pick 1
 ```
 
-Edit `.env` with your API keys:
+`--resume` and `--marksheet` are optional CLI arguments; `--github` is optional. `--pick` selects the ranked item used for the draft, `--output` changes the JSON output path (default `output/result.json`), and `--require-live` exits if startup has no live LLM provider. Use `--save-demo` only after a successful live run if you intend to replace the saved example.
 
-```env
-# Ordered LLM fallback providers
-LLM_PROVIDERS=groq,gemini
+## Tests
 
-# Groq API (OpenAI-compatible endpoint)
-GROQ_API_KEY=your_groq_api_key_here
-GROQ_MODEL=openai/gpt-oss-120b
-GROQ_MODEL_FALLBACKS=openai/gpt-oss-20b
-
-# Google Gemini API (optional fallback provider)
-GEMINI_API_KEY=your_gemini_api_key_here
-GEMINI_MODEL=gemini-2.5-flash
-GEMINI_MODEL_FALLBACKS=gemini-2.5-flash,gemini-2.0-flash
-
-# Tavily Web Search API Key (Required for live web discovery)
-TAVILY_API_KEY=your_tavily_api_key_here
-
-# Optional GitHub Token (improves rate limits for GitHub API)
-GITHUB_TOKEN=
-
-# Concurrency & Retries
-VERIFIER_CONCURRENCY=4
-MAX_LLM_RETRIES=3
-MAX_RESEARCH_ROUNDS=2
-REQUEST_TIMEOUT=8.0
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
 ```
 
-> **Note on Offline / Testing Mode**: When `GEMINI_API_KEY` or `TAVILY_API_KEY` are not set, the system automatically activates its built-in rule-based heuristic extraction, real verified scholarship knowledge base, and mock verification fallbacks, allowing full end-to-end testing without external API failures.
+Tests cover API routes and event streaming, profile/pipeline behavior, evidence and deadline checks, provider fallback handling, timeouts, ranking, and draft output. Tests may exercise cached or offline paths; a passing test suite does not prove that external API credentials or a live provider are working.
 
----
+## Limitations and safety
 
-## 💻 Running the CLI
-
-Run the full autonomous pipeline with the provided sample files or your own documents:
-
-```bash
-python run_cli.py \
-  --resume samples/sample_resume.pdf \
-  --marksheet samples/sample_marksheet.pdf \
-  --github torvalds \
-  --pick 1
-```
-
-### CLI Arguments:
-- `--resume`: Path to the student's resume PDF.
-- `--marksheet`: Path to the student's marksheet / transcript (`.pdf` or `.txt`).
-- `--github`: Public GitHub username (optional).
-- `--pick`: Rank index (1 to 5) of the opportunity for which to draft the SOP (default: 1).
-- `--output`: Filepath to save the complete JSON results (default: `output/result.json`).
-
----
-
-## 🌐 Running the FastAPI Server
-
-Start the backend API server:
-
-```bash
-python -m uvicorn api:app --host 0.0.0.0 --port 8000 --reload
-```
-
-### Endpoints:
-1. `GET /api/health`: Health status and configuration check.
-2. `GET /api/events`: Real-time Server-Sent Events (SSE) stream for frontend UI integrations.
-3. `POST /api/find-scholarships`: Accepts multipart form uploads (`resume`, `marksheet`, `github_username`, `pick`) and returns full JSON analysis.
-
----
-
-## 🧪 Testing
-
-Run the automated test suite:
-
-```bash
-pytest tests/ -v
-```
-
-The test suite validates:
-- Resume & marksheet PDF text extraction with `pypdf`.
-- Plain text transcript parsing.
-- EventBus event broadcasting and streaming queue.
-- ResearchAgent query generation and candidate deduplication.
-- VerifierAgent bounded concurrency and page fetching fallback.
-- RankerAgent deterministic top-5 ranking and scoring bounds.
-- WriterAgent fact grounding and draft disclaimer insertion.
-- Full end-to-end pipeline execution and output formatting.
-- FastAPI health check endpoints.
-
----
-
-## 🛡️ Safety & Ethics Principles
-
-- **No Hallucinated Credentials**: The system only grounds SOP drafts in accomplishments explicitly extracted from the student's documents.
-- **Draft Disclaimers**: All generated application materials are explicitly watermarked and disclaimed for human review.
-- **No Direct Submissions**: The software drafts and recommends opportunities; it never automatically submits university or scholarship applications.
+- Live search and LLM checks require configured credentials and remain subject to provider quotas, network errors, and page blocking.
+- Heuristic evidence extraction is conservative; some fields will correctly remain `unverified`, and curated fallback candidates are not independently confirmed until fetched-page verification succeeds.
+- The ranker returns up to five recommendations when enough distinct candidates pass its checks; it does not promise five.
+- Review source pages, deadlines, and eligibility yourself. Generated statements are marked as drafts; the software never submits applications.
+- AI coding tools were used to organize, implement, test, and document this project.
