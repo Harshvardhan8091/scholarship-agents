@@ -30,6 +30,10 @@ class PipelineState(TypedDict, total=False):
     resume_path: Optional[str]
     marksheet_path: Optional[str]
     github_username: Optional[str]
+    target_countries: Optional[str]
+    target_degree_level: Optional[str]
+    financial_need: Optional[str]
+    interests: Optional[str]
     chosen_pick: int
     profile: Optional[StudentProfile]
     candidates: List[CandidateOpportunity]
@@ -65,6 +69,10 @@ def create_scholarship_graph(
                 marksheet_path=state.get("marksheet_path"),
                 github_username=state.get("github_username"),
                 event_bus=bus,
+                target_countries=state.get("target_countries"),
+                target_degree_level=state.get("target_degree_level"),
+                financial_need=state.get("financial_need"),
+                interests=state.get("interests"),
             )
             return {"profile": profile}
         except Exception as e:
@@ -158,13 +166,17 @@ def create_scholarship_graph(
                 event_bus=bus,
             )
             if len(ranked_results.top_opportunities) < 5:
+                target_degree = profile.target_degree_level or "Master's"
+                target_country = ", ".join(profile.target_countries) or "international"
+                target_field = profile.field or "graduate study"
+                target_interests = " ".join(profile.interests)
                 official_queries = [
-                    "site:daad.de DAAD master's scholarship international students",
-                    "site:sbfi.admin.ch Swiss Government Excellence Scholarship master's",
-                    "site:erasmus-plus.ec.europa.eu Erasmus Mundus master's scholarship",
-                    "site:chevening.org Chevening master's scholarship international students",
-                    "site:foreign.fulbrightonline.org Fulbright foreign student master's scholarship",
-                    "site:edu master's computer science international student funding scholarship",
+                    f"site:daad.de DAAD {target_degree} scholarship {target_country} {target_field} {target_interests}",
+                    f"site:sbfi.admin.ch Swiss Government Excellence Scholarship {target_degree} {target_field}",
+                    f"site:erasmus-plus.ec.europa.eu Erasmus Mundus {target_degree} scholarship {target_field}",
+                    f"site:chevening.org Chevening {target_degree} scholarship {target_country}",
+                    f"site:foreign.fulbrightonline.org Fulbright {target_degree} scholarship {target_field}",
+                    f"site:edu {target_degree} {target_field} {target_interests} student funding scholarship",
                 ]
                 await bus.emit(
                     agent="ResearchAgent",

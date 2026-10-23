@@ -8,6 +8,8 @@ from models import RankedOpportunity, SOPDraft, StudentProfile
 
 
 class WriterAgent:
+    DRAFT_DISCLAIMER = "[DRAFT - FOR STUDENT REVIEW ONLY - DO NOT SUBMIT WITHOUT PERSONAL REVIEW & REVISION]"
+
     def __init__(self, llm_client: Optional[LLMClient] = None):
         self.llm_client = llm_client or LLMClient()
 
@@ -38,6 +40,9 @@ class WriterAgent:
                 sop_text = self._generate_heuristic_sop(opportunity, profile, grounded_facts)
         else:
             sop_text = self._generate_heuristic_sop(opportunity, profile, grounded_facts)
+
+        if self.DRAFT_DISCLAIMER.lower() not in sop_text.lower():
+            sop_text = f"> **{self.DRAFT_DISCLAIMER}**\n\n{sop_text}"
 
         draft = SOPDraft(
             opportunity_name=opportunity.name,

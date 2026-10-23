@@ -26,9 +26,12 @@ class StudentProfile(BaseModel):
     financial_need: Optional[str] = None
     gaps_or_missing_info: List[str] = Field(default_factory=list)
     github_bio: Optional[str] = None
+    github_username: Optional[str] = None
     github_public_repos: Optional[int] = None
+    github_repos_found: Optional[int] = None
     github_stars: Optional[int] = None
     github_top_languages: List[str] = Field(default_factory=list)
+    inputs_read: Dict[str, Any] = Field(default_factory=dict)
 
 
 class CandidateOpportunity(BaseModel):

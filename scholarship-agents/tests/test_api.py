@@ -133,6 +133,58 @@ async def test_find_scholarships_forwards_run_events_to_stream_queue(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_find_scholarships_forwards_new_profile_fields_and_logs_upload_metadata(
+    monkeypatch, caplog
+):
+    import logging
+
+    captured = {}
+
+    async def fake_pipeline(inputs, on_event, print_to_terminal):
+        captured.update(inputs)
+        return {
+            "student_profile": {
+                "inputs_read": {
+                    "resume": {"characters_read": 83},
+                    "marksheet": {"characters_read": 121},
+                }
+            },
+            "ranked_results": {"top_opportunities": []},
+        }
+
+    monkeypatch.setattr(api, "run_pipeline", fake_pipeline)
+    caplog.set_level(logging.INFO, logger="api")
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.post(
+            "/api/find-scholarships",
+            data={
+                "github_username": "https://github.com/octocat",
+                "target_countries": "Germany, Canada",
+                "target_degree_level": "PhD",
+                "financial_need": "Full funding needed",
+                "interests": "robotics",
+            },
+            files={
+                "resume": ("resume.txt", b"resume", "text/plain"),
+                "marksheet": ("marksheet.pdf", b"marksheet", "application/pdf"),
+            },
+        )
+
+    assert response.status_code == 200
+    assert captured["target_countries"] == "Germany, Canada"
+    assert captured["target_degree_level"] == "PhD"
+    assert captured["financial_need"] == "Full funding needed"
+    assert captured["interests"] == "robotics"
+    assert captured["github_username"] == "https://github.com/octocat"
+    assert "fields=['resume', 'marksheet', 'github_username'" in caplog.text
+    assert "size_bytes=6 characters_extracted=83" in caplog.text
+    assert "size_bytes=9 characters_extracted=121" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_find_scholarships_falls_back_to_explicit_replay(tmp_path, monkeypatch):
     replay_file = tmp_path / "demo_result.json"
     replay_file.write_text('{"ranked_results": {"top_opportunities": []}}', encoding="utf-8")

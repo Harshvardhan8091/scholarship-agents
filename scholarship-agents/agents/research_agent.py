@@ -318,24 +318,30 @@ class ResearchAgent:
         field = profile.field or "Computer Science STEM"
         countries = profile.target_countries or ["Germany", "USA", "UK", "Europe"]
         target_deg = profile.target_degree_level or "Master's"
+        interests = " ".join(profile.interests)
+        funding_need = (
+            "full funding tuition stipend"
+            if profile.financial_need == "Full funding needed"
+            else "scholarship funding"
+        )
 
         if round_index == 0:
             # Specific targeted queries using target degree level (e.g. Master's for a bachelor student)
             q_list = [
-                f"{countries[0] if countries else 'international'} {target_deg} scholarship {field} official website",
-                f"government fully funded scholarships {target_deg} international students {field}",
-                f"merit based scholarships {field} {target_deg} eligibility requirements",
-                f"top university tuition waiver {target_deg} scholarships {field}",
+                f"{countries[0] if countries else 'international'} {target_deg} scholarship {field} {interests} official website",
+                f"government {funding_need} {target_deg} international students {field} {interests}",
+                f"merit based scholarships {field} {target_deg} eligibility requirements {interests}",
+                f"top university tuition waiver {target_deg} scholarships {field} {interests}",
             ]
             if len(countries) > 1:
-                q_list.append(f"{countries[1]} university scholarships for international students {field}")
+                q_list.append(f"{countries[1]} university scholarships for international students {field} {interests}")
             return q_list
 
         elif round_index == 1:
             # Broader national and regional queries
             return [
-                f"international graduate scholarships {field} {target_deg} fully funded",
-                f"DAAD Erasmus Chevening Fulbright {field} eligibility",
+                f"international graduate scholarships {field} {target_deg} {funding_need} {interests}",
+                f"DAAD Erasmus Chevening Fulbright {field} {interests} eligibility",
                 f"European university master scholarships international students {field}",
                 f"global excellence scholarships graduate study in {field}",
                 "international fellowship master doctoral degree full funding",
@@ -346,7 +352,7 @@ class ResearchAgent:
                 "top international scholarships for developing countries master degree",
                 "fully funded government scholarships abroad university programs",
                 "open university master scholarships international students official portal",
-                f"scholarships for {target_deg} students abroad application requirements",
+                f"scholarships for {target_deg} students abroad {field} {interests} application requirements",
             ]
 
     async def _run_tavily_search(

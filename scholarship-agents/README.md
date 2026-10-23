@@ -45,7 +45,7 @@ flowchart TD
 | Agent | Responsibility |
 | --- | --- |
 | Profile | Extracts resume and marksheet text, optionally enriches it from a public GitHub profile, and returns a structured student profile. |
-| Research | Builds queries from the student's field, target degree, and target countries; searches Tavily when configured and supplements sparse results from a curated list. |
+| Research | Builds queries from the student's field, target degree, interests, funding need, and target countries; searches Tavily when configured and supplements sparse results from a curated list. |
 | Verifier | Fetches candidate pages, follows an official link when it can recover one from an aggregator, and accepts field values only when a fetched-page evidence snippet supports them. |
 | Ranker | Excludes recognized third-party, non-official, news/announcement, and closed-cycle results; deduplicates URLs and similar names; ranks up to five candidates. |
 | Writer | Produces a statement-of-purpose draft grounded in the available student profile and selected opportunity. |
@@ -54,7 +54,9 @@ The LLM client follows the configured `LLM_PROVIDERS` order (Groq and Gemini), i
 
 Some facts cannot be confirmed from pages and remain `unverified`; search snippets alone are not verification evidence. Curated fallbacks are not treated as live verification. Official-domain recognition is rule-based and may miss legitimate institutions or sites, so review each linked source. Eligibility and deadlines can change after a run.
 
-Research adapts its search terms and country alignment to extracted profile fields, degree level, and target countries rather than assuming one student. When a profile has limited matching sources, broader or curated international opportunities can still appear; inspect the country and eligibility evidence before acting. The bundled computer science, mechanical engineering (lower CGPA), and commerce profiles were run offline here: their top fives varied by profile, with some overlap from broad global fallback sources.
+Research adapts its search terms and country alignment to extracted profile fields and user-supplied target countries, degree level, funding need, and interests rather than assuming one student. User-supplied preferences override inferred profile values. When a profile has limited matching sources, broader or curated international opportunities can still appear; inspect the country and eligibility evidence before acting. The bundled computer science, mechanical engineering (lower CGPA), and commerce profiles were run offline here: their top fives varied by profile, with some overlap from broad global fallback sources.
+
+The website accepts PDF, TXT, PNG, or JPG resume and marksheet files. PDFs with fewer than 50 extracted characters are retried with `pdfplumber`, then optional `pytesseract`/`pdf2image` OCR when those packages are installed. Unreadable uploads are reported in the profile's **Inputs read** summary rather than silently treated as missing. GitHub accepts a profile URL or username; repository metadata comes from the public GitHub REST API and can be unavailable due to network or rate limits.
 
 ## Setup
 
@@ -82,7 +84,7 @@ Open <http://localhost:8000>. The main routes are:
 | `GET /api/health` | Returns `{"live": bool}`; `live` reflects whether an LLM provider answered the startup check. |
 | `GET /api/events` | Streams JSON `PipelineEvent` messages through SSE, including `started`, `progress`, `recovery`, `done`, and `error`. The event bus is process-global; streams are not isolated by run. |
 | `GET /api/replay` | Returns `samples/demo_result.json`; the page visibly labels it as a replay. |
-| `POST /api/find-scholarships` | Accepts multipart fields `resume`, `marksheet`, `github_username`, and optional `pick` (defaults to 1). |
+| `POST /api/find-scholarships` | Accepts `resume`, `marksheet`, optional `github_username`, `target_countries`, `target_degree_level`, `financial_need`, `interests`, and `pick` multipart fields. The response includes character counts, source status, and the submitted preferences in `student_profile.inputs_read`. |
 
 ## Run the CLI
 

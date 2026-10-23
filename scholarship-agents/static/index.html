@@ -51,7 +51,7 @@
       color: var(--ink);
       font: 16px/1.55 "Segoe UI", system-ui, -apple-system, sans-serif;
     }
-    button, input { font: inherit; }
+    button, input, select { font: inherit; }
     button, a, input { -webkit-tap-highlight-color: transparent; }
     :focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
     .shell { width: min(1160px, calc(100% - 36px)); margin: 0 auto; }
@@ -95,7 +95,7 @@
     .card-intro { margin: -7px 0 18px; color: var(--muted); font-size: 14px; }
     .field { display: grid; gap: 7px; margin-bottom: 16px; }
     .field label { font-size: 14px; font-weight: 700; }
-    .field input {
+    .field input, .field select {
       width: 100%;
       min-height: 46px;
       padding: 10px 12px;
@@ -104,6 +104,7 @@
       color: var(--ink);
       background: var(--field);
     }
+    .field select { cursor: pointer; }
     input[type="file"] { padding: 7px; font-size: 14px; }
     input[type="file"]::file-selector-button {
       min-height: 30px;
@@ -388,16 +389,41 @@
       <p class="card-intro">Upload your documents to give the research agents useful context.</p>
       <form id="search-form">
         <div class="field">
-          <label for="resume">Resume (PDF)</label>
-          <input id="resume" name="resume" type="file" accept=".pdf,application/pdf" required>
+          <label for="resume">Resume (PDF, TXT, PNG or JPG)</label>
+          <input id="resume" name="resume" type="file" accept=".pdf,.txt,.png,.jpg,.jpeg,application/pdf,text/plain,image/png,image/jpeg" required>
         </div>
         <div class="field">
-          <label for="marksheet">Marksheet (PDF or TXT)</label>
-          <input id="marksheet" name="marksheet" type="file" accept=".pdf,.txt,application/pdf,text/plain" required>
+          <label for="marksheet">Marksheet (PDF, TXT, PNG or JPG)</label>
+          <input id="marksheet" name="marksheet" type="file" accept=".pdf,.txt,.png,.jpg,.jpeg,application/pdf,text/plain,image/png,image/jpeg" required>
         </div>
         <div class="field">
-          <label for="github">GitHub username <span class="provider">(optional)</span></label>
-          <input id="github" name="github_username" type="text" autocomplete="username" placeholder="e.g. octocat">
+          <label for="github">GitHub profile URL or username <span class="provider">(optional)</span></label>
+          <input id="github" name="github_username" type="text" autocomplete="url" placeholder="https://github.com/octocat or @octocat">
+        </div>
+        <div class="field">
+          <label for="target-countries">Target countries <span class="provider">(comma-separated, optional)</span></label>
+          <input id="target-countries" name="target_countries" type="text" placeholder="e.g. Germany, Canada">
+        </div>
+        <div class="field">
+          <label for="target-degree-level">Degree level target</label>
+          <select id="target-degree-level" name="target_degree_level">
+            <option>Master's</option>
+            <option>PhD</option>
+            <option>Bachelor's</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="financial-need">Financial need</label>
+          <select id="financial-need" name="financial_need">
+            <option value="">Choose if relevant</option>
+            <option>Full funding needed</option>
+            <option>Partial funding</option>
+            <option>Not a concern</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="interests">Interests or research areas <span class="provider">(optional)</span></label>
+          <input id="interests" name="interests" type="text" placeholder="e.g. robotics, public health">
         </div>
         <div class="actions">
           <button id="submit-button" class="button button-primary" type="submit">Find scholarships</button>
@@ -567,7 +593,8 @@
         const fields = [
           ["Name", profile.name], ["Current degree", profile.degree], ["Field", profile.field],
           ["CGPA", profile.cgpa], ["Target level", profile.target_degree_level],
-          ["Target countries", profile.target_countries], ["Missing information", profile.gaps_or_missing_info]
+          ["Target countries", profile.target_countries], ["Financial need", profile.financial_need],
+          ["Interests", profile.interests], ["Missing information", profile.gaps_or_missing_info]
         ];
         fields.forEach(([label, value]) => {
           const item = document.createElement("div");
@@ -576,7 +603,9 @@
           dt.textContent = label;
           const dd = document.createElement("dd");
           const unknown = value === null || value === undefined || value === "" || (Array.isArray(value) && value.length === 0);
-          if (unknown) {
+          if (label === "Missing information" && unknown) {
+            dd.textContent = "None";
+          } else if (unknown) {
             dd.className = "unverified";
             dd.textContent = "unverified";
             dd.title = "The agents could not confirm this on the official page.";
@@ -584,6 +613,58 @@
             dd.textContent = Array.isArray(value) ? value.join(", ") : String(value);
           }
           item.append(dt, dd);
+          grid.append(item);
+        });
+        section.append(heading, grid);
+        parent.append(section);
+      }
+
+      function addInputsRead(profile, parent) {
+        const inputs = profile.inputs_read;
+        const section = document.createElement("section");
+        section.className = "result-section";
+        const heading = document.createElement("h3");
+        heading.textContent = "Inputs read";
+        if (!inputs) {
+          const unavailable = document.createElement("p");
+          unavailable.textContent = "Input-reading details were not included in this saved result.";
+          section.append(heading, unavailable);
+          parent.append(section);
+          return;
+        }
+        const grid = document.createElement("dl");
+        grid.className = "profile-grid";
+        const resume = inputs.resume || {};
+        const marksheet = inputs.marksheet || {};
+        const github = inputs.github || {};
+        const githubValue = github.status === "not_found"
+          ? "GitHub user not found"
+          : github.status === "rate_limited"
+            ? "GitHub API rate limit reached"
+            : github.status === "request_failed" || github.status === "repositories_failed"
+              ? github.reason || "GitHub request failed; repository count is unknown"
+              : github.status === "invalid_username"
+                ? github.reason
+                : github.username
+                  ? `@${github.username} · ${github.repos_found === null || github.repos_found === undefined ? "repository count unavailable" : `${github.repos_found} repos found`} · ${github.stars ?? "stars unavailable"} stars`
+                  : "No GitHub profile provided";
+        const resumeFile = resume.filename ? `${resume.filename} · ` : "";
+        const marksheetFile = marksheet.filename ? `${marksheet.filename} · ` : "";
+        const details = [
+          ["Resume", resume.characters_read ? `${resumeFile}${resume.characters_read} characters read` : resume.reason || "No text was extracted"],
+          ["Marksheet", marksheet.characters_read ? `${marksheetFile}${marksheet.characters_read} characters read` : marksheet.reason || "No text was extracted"],
+          ["GitHub", githubValue],
+          ["User-supplied fields", inputs.user_supplied_fields?.length ? inputs.user_supplied_fields.join(", ") : "None"],
+          ["Extracted sources", inputs.extracted_fields?.length ? inputs.extracted_fields.join(", ") : "None"]
+        ];
+        details.forEach(([label, value]) => {
+          const item = document.createElement("div");
+          item.className = "profile-item";
+          const term = document.createElement("dt");
+          term.textContent = label;
+          const description = document.createElement("dd");
+          description.textContent = String(value);
+          item.append(term, description);
           grid.append(item);
         });
         section.append(heading, grid);
@@ -782,7 +863,10 @@
           banner.textContent = "REPLAY: this is a saved earlier run, not a live one.";
           container.append(banner);
         }
-        if (data.student_profile) addProfile(data.student_profile, container);
+        if (data.student_profile) {
+          addProfile(data.student_profile, container);
+          addInputsRead(data.student_profile, container);
+        }
 
         const opportunitySection = document.createElement("section");
         opportunitySection.className = "result-section";
@@ -892,6 +976,10 @@
         payload.append(CFG.marksheetField, marksheet);
         const github = document.getElementById("github").value.trim();
         if (github) payload.append(CFG.githubField, github);
+        payload.append("target_countries", document.getElementById("target-countries").value.trim());
+        payload.append("target_degree_level", document.getElementById("target-degree-level").value);
+        payload.append("financial_need", document.getElementById("financial-need").value);
+        payload.append("interests", document.getElementById("interests").value.trim());
         submitButton.disabled = true;
         submitButton.textContent = "Agents working...";
         resetSteps();

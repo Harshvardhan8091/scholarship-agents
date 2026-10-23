@@ -120,9 +120,15 @@ class RankerAgent:
             score += 8.0
         if any(country in opportunity.country.lower() for country in target_countries):
             score += 10.0
+        opportunity_text = f"{opportunity.name} {opportunity.provider}".lower()
+        interest_matches = sum(
+            1 for interest in profile.interests
+            if interest.strip().lower() in opportunity_text
+        )
+        score += min(interest_matches * 3.0, 9.0)
         if is_official_domain(opportunity.official_url):
             score += 10.0
-        text = f"{opportunity.name} {opportunity.provider}".lower()
+        text = opportunity_text
         if "master" in target_degree:
             if "bachelor" in text or "undergraduate" in text:
                 score -= 30.0
@@ -141,6 +147,16 @@ class RankerAgent:
         elif opportunity.deadline and "closed" in opportunity.deadline.lower():
             score -= 25.0
         return score
+
+    @staticmethod
+    def _matches_target_degree(opportunity: VerifiedOpportunity, target_degree: str) -> bool:
+        requested = target_degree.lower()
+        evidence = opportunity.degree_level.lower()
+        if "phd" in requested or "doctoral" in requested:
+            return any(term in evidence for term in ("phd", "doctoral", "doctorate"))
+        if "bachelor" in requested or "undergraduate" in requested:
+            return any(term in evidence for term in ("bachelor", "undergraduate"))
+        return any(term in evidence for term in ("master", "graduate", "postgraduate"))
 
     @classmethod
     def _curated_fallbacks(
@@ -220,11 +236,18 @@ class RankerAgent:
             opportunity
             for opportunity in verified_opportunities
             if opportunity.match_status in ("eligible", "partially_eligible")
-            and opportunity.degree_level == "Master's"
+            and self._matches_target_degree(
+                opportunity, profile.target_degree_level or "Master's"
+            )
             and bool(opportunity.official_url.strip())
         ]
 
-        if allow_curated_fallback and len(eligible_pool) < 5:
+        target_degree = profile.target_degree_level or "Master's"
+        if (
+            allow_curated_fallback
+            and len(eligible_pool) < 5
+            and "master" in target_degree.lower()
+        ):
             eligible_pool.extend(self._curated_fallbacks(eligible_pool))
 
         if not eligible_pool:
@@ -351,6 +374,7 @@ Skills: {profile.skills}
 Achievements: {profile.achievements}
 Target Countries: {profile.target_countries}
 Financial Need: {profile.financial_need}
+Interests: {profile.interests}
 
 VERIFIED OPPORTUNITIES (Candidate Pool):
 {opps_summary}
@@ -444,13 +468,17 @@ OUTPUT JSON SCHEMA:
             # Target country bonus
             if any(tc in opp.country.lower() for tc in target_countries):
                 score += 10.0
+            opp_text = f"{opp.name} {opp.provider}".lower()
+            score += min(
+                sum(1 for interest in profile.interests if interest.strip().lower() in opp_text) * 3.0,
+                9.0,
+            )
 
             # Item 2: Ranking bonus for official domains (.edu, .ac.*, .gov, daad.de, etc.)
             if is_official_domain(opp.official_url):
                 score += 10.0
 
             # Item 3: Degree level check — match with target_degree_level, penalize mismatch
-            opp_text = f"{opp.name} {opp.provider}".lower()
             if "master" in target_deg:
                 if "bachelor" in opp_text or "undergraduate" in opp_text:
                     score -= 30.0  # Penalize Bachelor programs for Master's target
@@ -465,6 +493,11 @@ OUTPUT JSON SCHEMA:
             # Only keep programs with verified or authentic funding
             if opp.funding_amount_coverage and "unverified" not in opp.funding_amount_coverage.lower():
                 score += 5.0
+                if profile.financial_need == "Full funding needed" and any(
+                    term in opp.funding_amount_coverage.lower()
+                    for term in ("full", "tuition", "stipend", "fully funded")
+                ):
+                    score += 4.0
 
             score += min(opp.confidence * 4.0, 4.0)
 

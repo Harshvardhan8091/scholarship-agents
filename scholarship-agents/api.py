@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import argparse
 import json
+import logging
 import os
 import shutil
 import tempfile
@@ -23,6 +24,7 @@ app = FastAPI(
     description="Multi-agent academic opportunity search, verification, ranking, and SOP drafting service.",
     version="1.0.0",
 )
+logger = logging.getLogger(__name__)
 
 app.add_middleware(
     CORSMiddleware,
@@ -146,7 +148,11 @@ async def find_scholarships_endpoint(
     resume: Optional[UploadFile] = File(None),
     marksheet: Optional[UploadFile] = File(None),
     github_username: Optional[str] = Form(None),
-    pick: int = Form(1),
+    target_countries: Optional[str] = Form(None),
+    target_degree_level: Optional[str] = Form(None),
+    financial_need: Optional[str] = Form(None),
+    interests: Optional[str] = Form(None),
+    pick: Optional[int] = Form(None),
 ) -> JSONResponse:
     """
     Executes the multi-agent pipeline for uploaded student profile files.
@@ -154,6 +160,19 @@ async def find_scholarships_endpoint(
     temp_dir = tempfile.mkdtemp(prefix="scholarship_agents_")
     resume_path = None
     marksheet_path = None
+    uploaded_files: Dict[str, Dict[str, Any]] = {}
+    received_fields = [
+        name for name, value in (
+            ("resume", resume),
+            ("marksheet", marksheet),
+            ("github_username", github_username),
+            ("target_countries", target_countries),
+            ("target_degree_level", target_degree_level),
+            ("financial_need", financial_need),
+            ("interests", interests),
+            ("pick", pick),
+        ) if value is not None
+    ]
 
     try:
         if REPLAY_RESULT_PATH is not None:
@@ -162,20 +181,42 @@ async def find_scholarships_endpoint(
                 return _load_replay_result()
 
         if resume:
-            resume_path = os.path.join(temp_dir, resume.filename or "resume.pdf")
+            resume_bytes = await resume.read()
+            safe_name = Path(resume.filename or "resume.pdf").name
+            resume_path = os.path.join(temp_dir, f"resume_{safe_name}")
             with open(resume_path, "wb") as buffer:
-                shutil.copyfileobj(resume.file, buffer)
+                buffer.write(resume_bytes)
+            uploaded_files["resume"] = {
+                "filename": safe_name,
+                "size_bytes": len(resume_bytes),
+            }
 
         if marksheet:
-            marksheet_path = os.path.join(temp_dir, marksheet.filename or "marksheet.pdf")
+            marksheet_bytes = await marksheet.read()
+            safe_name = Path(marksheet.filename or "marksheet.pdf").name
+            marksheet_path = os.path.join(temp_dir, f"marksheet_{safe_name}")
             with open(marksheet_path, "wb") as buffer:
-                shutil.copyfileobj(marksheet.file, buffer)
+                buffer.write(marksheet_bytes)
+            uploaded_files["marksheet"] = {
+                "filename": safe_name,
+                "size_bytes": len(marksheet_bytes),
+            }
+
+        logger.info(
+            "Received scholarship form fields=%s uploaded_files=%s",
+            received_fields,
+            uploaded_files,
+        )
 
         inputs = {
             "resume_path": resume_path,
             "marksheet_path": marksheet_path,
             "github_username": github_username,
-            "chosen_pick": pick,
+            "target_countries": target_countries,
+            "target_degree_level": target_degree_level or "Master's",
+            "financial_need": financial_need,
+            "interests": interests,
+            "chosen_pick": pick or 1,
         }
 
         # Forward events from the pipeline run to the global event bus
@@ -184,6 +225,17 @@ async def find_scholarships_endpoint(
                 await q.put(event)
 
         result = await run_pipeline(inputs, on_event=forward_event, print_to_terminal=True)
+        profile = result.get("student_profile") or {}
+        inputs_read = profile.get("inputs_read") or {}
+        for field_name, file_metadata in uploaded_files.items():
+            extracted = (inputs_read.get(field_name) or {}).get("characters_read", 0)
+            logger.info(
+                "Extracted uploaded file field=%s filename=%s size_bytes=%d characters_extracted=%d",
+                field_name,
+                file_metadata["filename"],
+                file_metadata["size_bytes"],
+                extracted,
+            )
         ranked = (result.get("ranked_results") or {}).get("top_opportunities") or []
         has_live_verification = any(
             opportunity.get("verification_mode") == "llm_live"
