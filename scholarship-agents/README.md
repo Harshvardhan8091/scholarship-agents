@@ -45,10 +45,10 @@ flowchart TD
 | Agent | Responsibility |
 | --- | --- |
 | Profile | Extracts resume and marksheet text, optionally enriches it from a public GitHub profile, and returns a structured student profile. |
-| Research | Builds queries from the student's field, target degree, interests, funding need, and target countries; searches Tavily when configured and supplements sparse results from a curated list. |
-| Verifier | Fetches candidate pages, follows an official link when it can recover one from an aggregator, and accepts field values only when a fetched-page evidence snippet supports them. |
-| Ranker | Excludes recognized third-party, non-official, news/announcement, and closed-cycle results; deduplicates URLs and similar names; ranks up to five candidates. |
-| Writer | Produces a statement-of-purpose draft grounded in the available student profile and selected opportunity. |
+| Research | Builds queries from the student's field, target degree, interests, funding need, and target countries; searches Tavily when configured and supplements sparse results from a curated list. Curated entries are fetched and verified before final ranking. |
+| Verifier | Fetches candidate pages, follows an official link when it can recover one from an aggregator, retries failed curated-page fetches once with browser headers and a 20-second timeout, and accepts field values only when fetched-page evidence supports them. |
+| Ranker | Excludes recognized third-party, non-official, news/announcement, closed-cycle, internationally restricted, and enrolled-student department pages; deduplicates URLs and similar names; prioritizes target countries when at least three matches exist and ranks unverified curated entries below verified ones. |
+| Writer | Produces a draft using only facts recorded in the student profile; personal intent is left as bracketed placeholders, with a note to check opportunity requirements on the official page. |
 
 The LLM client follows the configured `LLM_PROVIDERS` order (Groq and Gemini), including configured model fallbacks. Provider errors such as rate limits can trigger recovery and a provider/model switch; agents have deterministic or explicit unverified fallbacks. Verifier work is bounded to ten candidates per pass and 40 seconds per candidate. A failed or timed-out candidate is retained as unverified and does not stop the other candidates. Fetched pages and LLM responses are cached under ignored `cache/`.
 

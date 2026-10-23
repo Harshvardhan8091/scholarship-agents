@@ -187,14 +187,69 @@ async def test_ranker_and_writer_agents():
     assert "[DRAFT - FOR STUDENT REVIEW ONLY" in sop_draft.sop_markdown
     assert "Alex Rivera" in sop_draft.sop_markdown or "Applicant" in sop_draft.sop_markdown
     assert len(sop_draft.grounded_facts_used) >= 1
+    assert "[Add your own career goal here]" in sop_draft.sop_markdown
+    assert "work-experience requirements" in sop_draft.sop_markdown
+    assert "derived solely from my academic and professional record" not in sop_draft.sop_markdown
 
 
 @pytest.mark.asyncio
-async def test_full_pipeline_end_to_end():
+async def test_full_pipeline_end_to_end(monkeypatch):
+    from llm_client import LLMClient
+
+    monkeypatch.setattr(LLMClient, "is_configured", property(lambda _self: False))
+
+    async def offline_research(_self, profile, event_bus, **_kwargs):
+        names = [
+            "DAAD Data Science Fellowship",
+            "Berlin Renewable Energy Award",
+            "Munich Applied Mathematics Grant",
+            "Hamburg Biomedical Engineering Scholarship",
+            "Leipzig Quantum Computing Studentship",
+            "Cologne Environmental Research Bursary",
+            "Stuttgart Robotics Master's Fellowship",
+            "Dresden Public Health Graduate Award",
+            "Bonn Economics Research Scholarship",
+            "Freiburg Linguistics Funding",
+        ]
+        return [
+            CandidateOpportunity(
+                name=name,
+                provider=f"University {index}",
+                country="Germany",
+                official_url=f"https://university{index}.edu/scholarship/{index}",
+                degree_level="Master's",
+                discovery_source="tavily_live",
+            )
+            for index, name in enumerate(names)
+        ]
+
+    async def offline_verification(_self, candidates, profile, event_bus):
+        return [
+            VerifiedOpportunity(
+                name=candidate.name,
+                provider=candidate.provider,
+                country=candidate.country,
+                official_url=candidate.official_url,
+                degree_level="Master's",
+                eligibility="Open to international students.",
+                funding_amount_coverage="Full tuition and stipend",
+                deadline="2027-12-31",
+                match_status="eligible",
+                discovery_source=candidate.discovery_source,
+                verification_mode="heuristic",
+                confidence=0.9,
+                source_urls=[candidate.official_url],
+            )
+            for candidate in candidates
+        ]
+
+    monkeypatch.setattr(ResearchAgent, "run", offline_research)
+    monkeypatch.setattr(VerifierAgent, "run", offline_verification)
+
     inputs = {
         "resume_path": str(SAMPLES_DIR / "sample_resume.pdf"),
         "marksheet_path": str(SAMPLES_DIR / "sample_marksheet.pdf"),
-        "github_username": "torvalds",
+        "target_degree_level": "Master's",
         "chosen_pick": 1,
     }
 

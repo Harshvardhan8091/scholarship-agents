@@ -43,6 +43,9 @@ DOMESTIC_RESTRICTION_PATTERNS = [
     r"home\s+fee\s+status\s+only",
     r"uk\s+residents\s+only",
     r"not\s+(?:available|open|eligible)\s+for\s+international\s+students",
+    r"not\s+(?:available|open|eligible)\s+(?:to|for)\s+(?:international(?:\s*/\s*indian)?|indian)\s+(?:students?|applicants?|nationals?)",
+    r"(?:international(?:\s*/\s*indian)?|indian)\s+(?:students?|applicants?|nationals?)\s+(?:are\s+)?not\s+eligible",
+    r"no\s+(?:international|indian)\s+(?:students?|applicants?)",
 ]
 
 

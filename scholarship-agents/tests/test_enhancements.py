@@ -216,6 +216,226 @@ async def test_quality_filter_domestic_restriction():
     assert any("domestic" in u.lower() for u in res.unmet_criteria)
 
 
+@pytest.mark.asyncio
+async def test_verifier_domestic_restriction_uses_profile_target_degree(monkeypatch):
+    from unittest.mock import AsyncMock
+    from agents.verifier_agent import VerifierAgent
+
+    agent = VerifierAgent()
+    profile = StudentProfile(name="Test", target_degree_level="PhD")
+    candidate = CandidateOpportunity(
+        name="Domestic-only funding",
+        provider="Example Government",
+        country="United Kingdom",
+        official_url="https://www.gov.uk/student-finance",
+    )
+    monkeypatch.setattr(
+        agent,
+        "_fetch_page_content_and_html",
+        AsyncMock(
+            return_value=(
+                "This funding is only available for UK residents and domestic students only.",
+                "",
+            )
+        ),
+    )
+
+    result = await agent._verify_candidate(
+        candidate, profile, EventBus(print_to_terminal=False)
+    )
+
+    assert result.match_status == "ineligible"
+    assert result.degree_level == "PhD"
+    assert any("domestic" in reason.lower() for reason in result.unmet_criteria)
+
+
+@pytest.mark.asyncio
+async def test_curated_page_retries_once_with_browser_timeout(monkeypatch):
+    from unittest.mock import AsyncMock
+    from agents.verifier_agent import VerifierAgent
+
+    agent = VerifierAgent()
+    profile = StudentProfile(target_degree_level="Master's")
+    candidate = CandidateOpportunity(
+        name="Curated Scholarship",
+        provider="Example University",
+        country="Germany",
+        official_url="https://example.edu/scholarship",
+        discovery_source="curated_fallback",
+    )
+    monkeypatch.setattr(
+        agent,
+        "_fetch_page_content_and_html",
+        AsyncMock(
+            side_effect=[
+                ("FAILED_FETCH", ""),
+                ("A verified scholarship page with enough readable text for review.", "<html></html>"),
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        agent,
+        "_verify_with_llm",
+        AsyncMock(
+            return_value=VerifiedOpportunity(
+                name=candidate.name,
+                provider=candidate.provider,
+                country=candidate.country,
+                official_url=candidate.official_url,
+                discovery_source="curated_fallback",
+                match_status="partially_eligible",
+            )
+        ),
+    )
+
+    result = await agent._verify_candidate(
+        candidate, profile, EventBus(print_to_terminal=False)
+    )
+
+    assert result.match_status == "partially_eligible"
+    assert agent._fetch_page_content_and_html.await_count == 2
+    retry = agent._fetch_page_content_and_html.await_args_list[1]
+    assert retry.kwargs["timeout"] == 20.0
+    assert retry.kwargs["max_attempts"] == 1
+
+
+@pytest.mark.asyncio
+async def test_ranker_excludes_restricted_and_department_pages_and_prioritizes_targets():
+    class DisabledLLM:
+        is_configured = False
+
+    ranker = RankerAgent(llm_client=DisabledLLM())
+    profile = StudentProfile(
+        target_degree_level="Master's",
+        target_countries=["Germany"],
+    )
+    target_names = [
+        "DAAD Research Excellence Grant",
+        "Berlin Engineering Fellowship",
+        "Bavarian Graduate Scholars Fund",
+    ]
+    target_opportunities = [
+        VerifiedOpportunity(
+            name=name,
+            provider=f"University {index}",
+            country="Germany",
+            official_url=f"https://daad.de/fellowship-{index}",
+            degree_level="Master's",
+            match_status="eligible",
+            discovery_source="tavily_live",
+            verification_mode="heuristic",
+            funding_amount_coverage="Full tuition",
+            confidence=0.9,
+        )
+        for index, name in enumerate(target_names)
+    ]
+    outside_opportunity = VerifiedOpportunity(
+        name="International Master's Grant",
+        provider="University Abroad",
+        country="Canada",
+        official_url="https://example.edu/grant",
+        degree_level="Master's",
+        match_status="eligible",
+        discovery_source="tavily_live",
+        verification_mode="heuristic",
+        funding_amount_coverage="Full tuition",
+        confidence=1.0,
+    )
+    curated_unverified = VerifiedOpportunity(
+        name="Curated Master's Award",
+        provider="Example University",
+        country="Germany",
+        official_url="https://example.edu/curated",
+        degree_level="Master's",
+        match_status="partially_eligible",
+        discovery_source="curated_fallback",
+        verification_mode="unverified",
+        confidence=0.0,
+    )
+    international_restricted = VerifiedOpportunity(
+        name="Domestic-only Master's Grant",
+        provider="University",
+        country="Germany",
+        official_url="https://example.edu/domestic",
+        degree_level="Master's",
+        match_status="eligible",
+        eligibility="Not open to Indian applicants.",
+    )
+    department_page = VerifiedOpportunity(
+        name="Funding, Tuition Fees and Awards",
+        provider="University",
+        country="Germany",
+        official_url="https://example.edu/funding",
+        degree_level="Master's",
+        match_status="eligible",
+        eligibility="Only for students already enrolled at this university.",
+    )
+    candidates = [
+        *target_opportunities,
+        outside_opportunity,
+        curated_unverified,
+        international_restricted,
+        department_page,
+    ]
+
+    results = await ranker.run(
+        candidates, profile, EventBus(print_to_terminal=False)
+    )
+
+    ranked = results.top_opportunities
+    assert all(item.country == "Germany" for item in ranked[:3])
+    assert all(
+        item.discovery_source != "curated_fallback" for item in ranked[:4]
+    ), [(item.name, item.discovery_source, item.verification_mode) for item in ranked]
+    assert not any(
+        item.name in {"Domestic-only Master's Grant", "Funding, Tuition Fees and Awards"}
+        for item in ranked
+    )
+    assert any("international/indian" in reason.lower() for reason in international_restricted.unmet_criteria)
+    assert any("enrolled students" in reason.lower() for reason in department_page.unmet_criteria)
+
+
+def test_writer_uses_profile_facts_and_personal_intent_placeholders():
+    from agents.writer_agent import WriterAgent
+
+    profile = StudentProfile(
+        name="Test Applicant",
+        degree="Bachelor of Science",
+        field="Computer Science",
+        skills=["Python"],
+    )
+    verified = VerifiedOpportunity(
+        name="Example Master's Scholarship",
+        provider="Example University",
+        country="Germany",
+        official_url="https://example.edu/scholarship",
+    )
+    opportunity = RankedOpportunity(
+        rank=1,
+        name=verified.name,
+        provider=verified.provider,
+        country=verified.country,
+        official_url=verified.official_url,
+        fit_score=80.0,
+        reasoning="Test opportunity.",
+        funding="unverified",
+        deadline="unverified",
+        verified_data=verified,
+    )
+
+    writer = WriterAgent()
+    facts = writer._collect_grounded_facts(profile)
+    draft = writer._generate_grounded_sop(opportunity, profile, facts)
+
+    assert "Test Applicant" in draft
+    assert "Bachelor of Science" in draft
+    assert "Python" in draft
+    assert "[Add your own career goal here]" in draft
+    assert "work-experience requirements" in draft
+    assert "high distinction" not in draft
+    assert "derived solely from my academic and professional record" not in draft
+
+
 def test_official_domain_ranking_bonus():
     from agents.research_agent import is_official_domain
     from agents.ranker_agent import RankerAgent

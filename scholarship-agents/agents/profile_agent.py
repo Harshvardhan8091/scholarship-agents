@@ -118,13 +118,8 @@ class ProfileAgent:
             )
             github_data = await self._fetch_github_profile(normalized_username, event_bus)
 
-        # 4. Use LLM to structure StudentProfile
-        await event_bus.emit(
-            agent="ProfileAgent",
-            event_type="progress",
-            message="Synthesizing structured StudentProfile JSON via Gemini LLM...",
-        )
-
+        # 4. Use an LLM, when available, to structure StudentProfile
+        self.llm_client.last_provider = None
         profile = await self._synthesize_profile_llm(
             resume_text=resume_text,
             marksheet_text=marksheet_text,
@@ -134,6 +129,11 @@ class ProfileAgent:
             target_degree_level=target_degree_level,
             financial_need=financial_need,
             interests=interests,
+        )
+        await event_bus.emit(
+            agent="ProfileAgent",
+            event_type="progress",
+            message="Structured StudentProfile extraction completed.",
         )
         supplied_countries = self._parse_list(target_countries)
         if supplied_countries:
@@ -538,7 +538,7 @@ Return a single JSON object with these keys:
             await event_bus.emit(
                 agent="ProfileAgent",
                 event_type="recovery",
-                message="GEMINI_API_KEY is not configured; using rule-based profile extraction fallback for testing.",
+                message="No LLM provider is configured; using rule-based profile extraction.",
             )
             return self._heuristic_profile_extraction(
                 resume_text, marksheet_text, github_data

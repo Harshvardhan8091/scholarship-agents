@@ -221,6 +221,11 @@ def create_scholarship_graph(
                         degree_level=ranked_opportunity.degree_level,
                         discovery_source="curated_fallback",
                     )
+                    if not any(
+                        existing.official_url == candidate.official_url
+                        for existing in candidates
+                    ):
+                        candidates.append(candidate)
                     try:
                         verified_curated = await asyncio.wait_for(
                             v_agent._verify_candidate(candidate, profile, bus),
@@ -235,10 +240,13 @@ def create_scholarship_graph(
                         verified_curated = ranked_opportunity.verified_data.model_copy(
                             update={
                                 "verification_mode": "unverified",
+                                "degree_level": "unverified",
                                 "eligibility": "unverified",
                                 "funding_amount_coverage": "unverified",
                                 "deadline": "unverified",
                                 "how_to_apply": "unverified",
+                                "match_status": "unverified",
+                                "confidence": 0.0,
                                 "evidence": {},
                                 "missing_information": [
                                     f"Curated verification timed out after {CANDIDATE_TIMEOUT_SECONDS} seconds."
@@ -246,19 +254,18 @@ def create_scholarship_graph(
                             }
                         )
 
-                    ranked_opportunity.verified_data = verified_curated
-                    ranked_opportunity.name = verified_curated.name
-                    ranked_opportunity.provider = verified_curated.provider
-                    ranked_opportunity.country = verified_curated.country
-                    ranked_opportunity.official_url = verified_curated.official_url
-                    ranked_opportunity.degree_level = verified_curated.degree_level
-                    ranked_opportunity.funding = verified_curated.funding_amount_coverage
-                    ranked_opportunity.deadline = verified_curated.deadline
-                    ranked_opportunity.evidence = verified_curated.evidence
-                    ranked_opportunity.verification_mode = verified_curated.verification_mode
-                    ranked_opportunity.deadline_source_url = verified_curated.deadline_source_url
-                    ranked_opportunity.last_checked = verified_curated.last_checked
+                    verified = [
+                        existing
+                        for existing in verified
+                        if existing.official_url != candidate.official_url
+                    ]
                     verified.append(verified_curated)
+                ranked_results = await rk_agent.run(
+                    verified_opportunities=verified,
+                    profile=profile,
+                    event_bus=bus,
+                    allow_curated_fallback=False,
+                )
             return {
                 "ranked_results": ranked_results,
                 "candidates": candidates,

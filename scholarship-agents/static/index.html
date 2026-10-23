@@ -425,6 +425,16 @@
           <label for="interests">Interests or research areas <span class="provider">(optional)</span></label>
           <input id="interests" name="interests" type="text" placeholder="e.g. robotics, public health">
         </div>
+        <div class="field">
+          <label for="pick">Write the SOP for ranked opportunity</label>
+          <select id="pick" name="pick">
+            <option value="1">1</option>
+            <option value="2">2</option>
+            <option value="3">3</option>
+            <option value="4">4</option>
+            <option value="5">5</option>
+          </select>
+        </div>
         <div class="actions">
           <button id="submit-button" class="button button-primary" type="submit">Find scholarships</button>
           <button id="demo-button" class="button button-secondary" type="button">Show saved demo run</button>
@@ -980,6 +990,7 @@
         payload.append("target_degree_level", document.getElementById("target-degree-level").value);
         payload.append("financial_need", document.getElementById("financial-need").value);
         payload.append("interests", document.getElementById("interests").value.trim());
+        payload.append("pick", document.getElementById("pick").value);
         submitButton.disabled = true;
         submitButton.textContent = "Agents working...";
         resetSteps();

@@ -79,6 +79,60 @@ class RankerAgent:
         return False
 
     @staticmethod
+    def _applicant_restriction_reason(
+        opportunity: VerifiedOpportunity,
+    ) -> Optional[str]:
+        details = " ".join(
+            [
+                opportunity.name,
+                opportunity.eligibility,
+                *opportunity.matched_criteria,
+                *opportunity.unmet_criteria,
+                *opportunity.evidence.values(),
+            ]
+        )
+        if re.search(
+            r"(?:not\s+(?:open|available|eligible)\s+(?:to|for)\s+"
+            r"(?:international(?:\s*/\s*indian)?|indian)\s+"
+            r"(?:students?|applicants?|nationals?)|"
+            r"(?:international(?:\s*/\s*indian)?|indian)\s+"
+            r"(?:students?|applicants?|nationals?)\s+"
+            r"(?:are\s+)?not\s+eligible|"
+            r"no\s+(?:international|indian)\s+(?:students?|applicants?)|"
+            r"\(a\).{0,80}(?:not open|not eligible|domestic|\bno\b)|"
+            r"only\s+(?:domestic|home|uk|us)\s+(?:students|applicants)|"
+            r"(?:domestic|home)\s+students?\s+only)",
+            details,
+            re.I,
+        ):
+            return "Excluded: not open to international/Indian applicants."
+
+        if re.search(
+            r"funding,?\s+tuition fees?\s*(?:and|&)\s*awards?|"
+            r"(?:only\s+for|restricted\s+to|available\s+only\s+to|must\s+be)"
+            r".{0,80}(?:already\s+)?(?:enrolled|registered)\s+students?|"
+            r"must\s+be\s+(?:currently\s+)?(?:enrolled|registered)\s+at\b|"
+            r"only\s+(?:current|existing|registered|enrolled)\s+students?\s+"
+            r"(?:at|of)\b|students?\s+already\s+enrolled\s+at\b",
+            details,
+            re.I,
+        ):
+            return "Excluded: university department funding page for its own enrolled students."
+        return None
+
+    @staticmethod
+    def _matches_target_country(
+        opportunity: VerifiedOpportunity | RankedOpportunity,
+        profile: StudentProfile,
+    ) -> bool:
+        country = opportunity.country.lower()
+        return any(
+            target.strip().lower() in country
+            for target in (profile.target_countries or [])
+            if target.strip()
+        )
+
+    @staticmethod
     def _normalized_name(name: str) -> str:
         return " ".join(re.findall(r"[a-z0-9]+", name.lower()))
 
@@ -118,7 +172,7 @@ class RankerAgent:
             score += 15.0
         elif opportunity.match_status == "partially_eligible":
             score += 8.0
-        if any(country in opportunity.country.lower() for country in target_countries):
+        if any(country.strip() in opportunity.country.lower() for country in target_countries):
             score += 10.0
         opportunity_text = f"{opportunity.name} {opportunity.provider}".lower()
         interest_matches = sum(
@@ -146,6 +200,11 @@ class RankerAgent:
             score -= 8.0
         elif opportunity.deadline and "closed" in opportunity.deadline.lower():
             score -= 25.0
+        if (
+            opportunity.discovery_source == "curated_fallback"
+            and opportunity.verification_mode == "unverified"
+        ):
+            score -= 35.0
         return score
 
     @staticmethod
@@ -215,7 +274,12 @@ class RankerAgent:
         )
 
         for opportunity in verified_opportunities:
-            if self._is_non_award(opportunity.name, opportunity.official_url):
+            restriction_reason = self._applicant_restriction_reason(opportunity)
+            if restriction_reason:
+                if restriction_reason not in opportunity.unmet_criteria:
+                    opportunity.unmet_criteria.append(restriction_reason)
+                opportunity.match_status = "ineligible"
+            elif self._is_non_award(opportunity.name, opportunity.official_url):
                 if "excluded: non-award" not in opportunity.unmet_criteria:
                     opportunity.unmet_criteria.append("excluded: non-award")
                 opportunity.match_status = "aggregator_excluded"
@@ -279,12 +343,32 @@ class RankerAgent:
         else:
             results = self._rank_heuristically(eligible_pool, profile)
 
-        results.top_opportunities = self._dedupe_ranked(results.top_opportunities)[:5]
-        if len(results.top_opportunities) < 5:
+        results.top_opportunities = self._dedupe_ranked(results.top_opportunities)
+        target_country_count = sum(
+            self._matches_target_country(opportunity, profile)
+            for opportunity in eligible_pool
+        )
+        if target_country_count >= 3:
             heuristic_results = self._rank_heuristically(eligible_pool, profile)
             results.top_opportunities = self._dedupe_ranked(
                 results.top_opportunities + heuristic_results.top_opportunities
-            )[:5]
+            )
+        elif len(results.top_opportunities) < 5:
+            heuristic_results = self._rank_heuristically(eligible_pool, profile)
+            results.top_opportunities = self._dedupe_ranked(
+                results.top_opportunities + heuristic_results.top_opportunities
+            )
+        results.top_opportunities.sort(
+            key=lambda opportunity: (
+                opportunity.discovery_source == "curated_fallback"
+                and opportunity.verification_mode == "unverified",
+                not self._matches_target_country(opportunity, profile)
+                if target_country_count >= 3
+                else False,
+                -opportunity.fit_score,
+            )
+        )
+        results.top_opportunities = results.top_opportunities[:5]
         for rank, opportunity in enumerate(results.top_opportunities, start=1):
             opportunity.rank = rank
 
@@ -311,10 +395,20 @@ class RankerAgent:
         profile: StudentProfile,
     ) -> List[VerifiedOpportunity]:
         kept: List[VerifiedOpportunity] = []
+        target_country_count = sum(
+            self._matches_target_country(opportunity, profile)
+            for opportunity in opportunities
+        )
         for opportunity in sorted(
             opportunities,
-            key=lambda item: self._heuristic_score(item, profile),
-            reverse=True,
+            key=lambda item: (
+                item.discovery_source == "curated_fallback"
+                and item.verification_mode == "unverified",
+                not self._matches_target_country(item, profile)
+                if target_country_count >= 3
+                else False,
+                -self._heuristic_score(item, profile),
+            ),
         ):
             if any(
                 self._normalize_url(opportunity.official_url)
@@ -509,7 +603,20 @@ OUTPUT JSON SCHEMA:
 
             scored.append((score, opp))
 
-        scored.sort(key=lambda x: x[0], reverse=True)
+        target_country_count = sum(
+            self._matches_target_country(opportunity, profile)
+            for opportunity in opportunities
+        )
+        scored.sort(
+            key=lambda item: (
+                item[1].discovery_source == "curated_fallback"
+                and item[1].verification_mode == "unverified",
+                not self._matches_target_country(item[1], profile)
+                if target_country_count >= 3
+                else False,
+                -item[0],
+            )
+        )
         top_picks: List[RankedOpportunity] = []
 
         target_label = profile.target_degree_level or "Master's"

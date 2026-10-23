@@ -309,7 +309,10 @@ class VerifierAgent:
         await event_bus.emit(
             agent="VerifierAgent",
             event_type="progress",
-            message=f"Fetching official scholarship page: {candidate.name[:50]} ({candidate.official_url})...",
+            message=(
+                f"Fetching {'official scholarship ' if is_official_domain(candidate.official_url) else ''}"
+                f"page: {candidate.name[:50]} ({candidate.official_url})..."
+            ),
         )
 
         # 1. Check if candidate page is an aggregator/listicle/blog
@@ -317,6 +320,21 @@ class VerifierAgent:
 
         # 2. Fetch page content (and raw HTML to follow official links if aggregator)
         page_text, raw_html = await self._fetch_page_content_and_html(candidate.official_url, event_bus)
+        if (
+            candidate.discovery_source == "curated_fallback"
+            and (not page_text or "FAILED_FETCH" in page_text)
+        ):
+            await event_bus.emit(
+                agent="VerifierAgent",
+                event_type="recovery",
+                message=f"Retrying curated official page with browser headers and a 20-second timeout: {candidate.name[:50]}.",
+            )
+            page_text, raw_html = await self._fetch_page_content_and_html(
+                candidate.official_url,
+                event_bus,
+                timeout=20.0,
+                max_attempts=1,
+            )
 
         # If aggregator, attempt to follow official source link
         if is_agg:
@@ -396,7 +414,7 @@ class VerifierAgent:
                 provider=candidate.provider,
                 country=candidate.country,
                 official_url=candidate.official_url,
-                degree_level=degree_level,
+                degree_level=profile.target_degree_level or "unverified",
                 match_status="ineligible",
                 unmet_criteria=["Restricted to domestic/resident students only (international applicant ineligible)"],
                 source_urls=[candidate.official_url],
@@ -422,18 +440,24 @@ class VerifierAgent:
             )
             return self._heuristic_verifier(candidate, page_text, profile)
 
-    async def _fetch_page_content_and_html(self, url: str, event_bus: EventBus) -> Tuple[str, str]:
+    async def _fetch_page_content_and_html(
+        self,
+        url: str,
+        event_bus: EventBus,
+        *,
+        timeout: Optional[float] = None,
+        max_attempts: int = 2,
+    ) -> Tuple[str, str]:
         """Fetches page content with disk caching, returning (text, raw_html)."""
         cached = get_cached_page(url)
         if cached:
             return cached, ""
 
-        max_attempts = 2
         for attempt in range(1, max_attempts + 1):
             try:
                 async with httpx.AsyncClient(
                     headers=BROWSER_HEADERS,
-                    timeout=settings.REQUEST_TIMEOUT,
+                    timeout=timeout if timeout is not None else settings.REQUEST_TIMEOUT,
                     follow_redirects=True,
                 ) as client:
                     resp = await client.get(url)
