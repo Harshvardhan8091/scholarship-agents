@@ -55,7 +55,15 @@
     button, a, input { -webkit-tap-highlight-color: transparent; }
     :focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
     .shell { width: min(1160px, calc(100% - 36px)); margin: 0 auto; }
-    header { padding: 42px 0 26px; }
+    header { padding: 34px 0 25px; }
+    .hero {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 20px;
+      border-bottom: 1px solid var(--line);
+    }
+    .hero-copy { min-width: 0; }
     .eyebrow {
       margin: 0 0 7px;
       color: var(--teal);
@@ -151,8 +159,8 @@
     }
     .mode.live { border-color: var(--teal); color: var(--teal); }
     .mode.live::before { background: var(--teal); }
-    .mode.offline { border-color: var(--amber); color: var(--amber); }
-    .mode.offline::before { background: var(--amber); }
+    .mode.offline { color: var(--muted); }
+    .mode.offline::before { background: var(--muted); }
     .input-heading {
       display: flex;
       align-items: flex-start;
@@ -259,7 +267,7 @@
     .profile-item dt { color: var(--muted); font-size: 12px; font-weight: 750; text-transform: uppercase; letter-spacing: .04em; }
     .profile-item dd { margin: 3px 0 0; overflow-wrap: anywhere; }
     .opportunity-list { display: grid; gap: 13px; }
-    .opportunity { padding: 17px; border: 1px solid var(--line); border-radius: 9px; background: var(--card); }
+    .opportunity { padding: 17px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
     .opportunity-top { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
     .rank { color: var(--teal); font-size: 13px; font-weight: 800; white-space: nowrap; }
     .provider, .country { color: var(--muted); font-size: 13px; }
@@ -271,6 +279,7 @@
     .data-field { min-width: 0; }
     .data-label { display: block; margin-bottom: 2px; color: var(--muted); font-size: 12px; font-weight: 750; }
     .data-value { overflow-wrap: anywhere; }
+    .funding-field .data-value { color: var(--ink); font-size: 19px; font-weight: 800; line-height: 1.35; }
     .unverified { color: var(--muted); font-style: italic; }
     .why { margin: 12px 0; }
     details { margin-top: 10px; }
@@ -325,6 +334,17 @@
       white-space: pre-wrap;
       overflow-wrap: anywhere;
     }
+    .candidate-table-wrap { overflow-x: auto; margin-top: 12px; }
+    .candidate-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    .candidate-table th, .candidate-table td {
+      padding: 10px 9px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+    .candidate-table th { color: var(--muted); font-size: 12px; letter-spacing: .04em; text-transform: uppercase; }
+    .candidate-table tr.excluded td { color: var(--muted); background: var(--field); }
+    .candidate-table a { color: var(--teal); overflow-wrap: anywhere; }
     .fade-in { animation: appear .2s ease-out; }
     footer { padding: 0 0 26px; color: var(--muted); font-size: 13px; }
     @keyframes pulse { 50% { transform: scale(.68); opacity: .45; } }
@@ -332,10 +352,12 @@
     @media (max-width: 800px) {
       .layout { grid-template-columns: 1fr; }
       header { padding-top: 30px; }
+      .hero { align-items: flex-start; }
     }
     @media (max-width: 480px) {
       .shell { width: min(100% - 24px, 1160px); }
       .card { padding: 17px; }
+      .hero { flex-direction: column; gap: 12px; }
       .steps { gap: 3px; }
       .step-label { font-size: 10px; }
       .step:not(:last-child)::after { left: calc(50% + 15px); width: calc(100% - 30px); }
@@ -349,17 +371,19 @@
   </style>
 </head>
 <body>
-  <header class="shell">
-    <p class="eyebrow">Scholarship finder · research desk</p>
-    <h1>Find a path to your next degree.</h1>
-    <p class="lede">A careful, evidence-led search for scholarships and graduate opportunities, with sources and application details kept close at hand.</p>
+  <header class="shell hero">
+    <div class="hero-copy">
+      <p class="eyebrow">Scholarship finder · research desk</p>
+      <h1>Find a path to your next degree.</h1>
+      <p class="lede">A careful, evidence-led search for scholarships and graduate opportunities, with sources and application details kept close at hand.</p>
+    </div>
+    <span id="mode-badge" class="mode" role="status" aria-live="polite">Checking mode</span>
   </header>
 
   <main class="shell layout">
     <section class="card" aria-labelledby="input-title">
       <div class="input-heading">
         <h2 id="input-title">Your materials</h2>
-        <span id="mode-badge" class="mode" role="status">Checking mode</span>
       </div>
       <p class="card-intro">Upload your documents to give the research agents useful context.</p>
       <form id="search-form">
@@ -524,6 +548,15 @@
         return wrapper;
       }
 
+      function normalizeUrl(value) {
+        try {
+          const url = new URL(value);
+          return `${url.protocol}//${url.host}${url.pathname}`.replace(/\/+$/, "").toLowerCase();
+        } catch {
+          return "";
+        }
+      }
+
       function addProfile(profile, parent) {
         const section = document.createElement("section");
         section.className = "result-section";
@@ -597,8 +630,9 @@
         const source = document.createElement("span");
         source.className = "badge badge-fallback";
         const sourceValue = opportunity.discovery_source;
-        source.textContent = sourceValue || "unverified";
-        if (!sourceValue) {
+        const hasSource = Boolean(sourceValue) && String(sourceValue).toLowerCase() !== "unverified";
+        source.textContent = hasSource ? sourceValue : "unverified";
+        if (!hasSource) {
           source.classList.add("unverified");
           source.title = "The agents could not confirm this on the official page.";
         }
@@ -607,7 +641,9 @@
         const fields = document.createElement("div");
         fields.className = "opportunity-fields";
         fields.append(showField("Country", opportunity.country));
-        fields.append(showField("Funding", opportunity.funding));
+        const funding = showField("Funding", opportunity.funding);
+        funding.classList.add("funding-field");
+        fields.append(funding);
         fields.append(showField("Deadline", opportunity.deadline));
         fields.append(showField("Eligibility", (opportunity.verified_data || {}).eligibility));
 
@@ -632,16 +668,108 @@
         const link = document.createElement("a");
         link.className = "official-link";
         link.textContent = "Open official page ↗";
-        link.href = opportunity.official_url || "#";
-        link.target = "_blank";
-        link.rel = "noopener noreferrer";
-        if (!opportunity.official_url) {
+        let safeUrl = false;
+        try {
+          const parsedUrl = new URL(opportunity.official_url);
+          safeUrl = parsedUrl.protocol === "https:" || parsedUrl.protocol === "http:";
+        } catch { /* Invalid or missing source URLs remain visibly unverified. */ }
+        if (safeUrl) {
+          link.href = opportunity.official_url;
+          link.target = "_blank";
+          link.rel = "noopener noreferrer";
+        } else {
           link.removeAttribute("target");
           link.classList.add("unverified");
           link.textContent = "Official page unverified";
         }
         card.append(top, badges, fields, why, details, link);
         parent.append(card);
+      }
+
+      function addCandidateAudit(data, parent) {
+        const verificationByUrl = new Map();
+        (data.all_verified_opportunities || []).forEach((verified) => {
+          [verified.official_url, ...(verified.source_urls || [])]
+            .map(normalizeUrl)
+            .filter(Boolean)
+            .forEach((url) => verificationByUrl.set(url, verified));
+        });
+        const candidates = data.all_candidates?.length
+          ? data.all_candidates
+          : (data.all_verified_opportunities || []).map((verified) => ({
+              name: verified.name,
+              provider: verified.provider,
+              country: verified.country,
+              official_url: verified.official_url,
+              discovery_source: verified.discovery_source
+            }));
+        if (!candidates.length) return;
+
+        const details = document.createElement("details");
+        details.className = "raw";
+        const summary = document.createElement("summary");
+        summary.textContent = `All ${candidates.length} candidates considered`;
+        const wrapper = document.createElement("div");
+        wrapper.className = "candidate-table-wrap";
+        const table = document.createElement("table");
+        table.className = "candidate-table";
+        const head = document.createElement("thead");
+        const headerRow = document.createElement("tr");
+        ["Opportunity", "Country", "Status", "Why / evidence", "Source"].forEach((label) => {
+          const cell = document.createElement("th");
+          cell.scope = "col";
+          cell.textContent = label;
+          headerRow.append(cell);
+        });
+        head.append(headerRow);
+        const body = document.createElement("tbody");
+        candidates.forEach((candidate) => {
+          const verified = verificationByUrl.get(normalizeUrl(candidate.official_url));
+          const status = verified?.match_status || "unverified";
+          const reasons = [
+            ...(verified?.unmet_criteria || []),
+            ...(verified?.missing_information || [])
+          ];
+          const excluded = status === "ineligible" || status === "aggregator_excluded" ||
+            reasons.some((reason) => String(reason).toLowerCase().startsWith("excluded:"));
+          const row = document.createElement("tr");
+          if (excluded) row.className = "excluded";
+          const nameCell = document.createElement("td");
+          const name = document.createElement("strong");
+          name.textContent = candidate.name || "unverified";
+          nameCell.append(name);
+          const provider = document.createElement("div");
+          provider.className = "provider";
+          provider.textContent = candidate.provider || "";
+          nameCell.append(provider);
+          const countryCell = document.createElement("td");
+          countryCell.textContent = candidate.country || "unverified";
+          const statusCell = document.createElement("td");
+          statusCell.textContent = excluded ? `Excluded · ${status}` : status;
+          const whyCell = document.createElement("td");
+          whyCell.textContent = reasons.length
+            ? reasons.join("; ")
+            : verified ? "No exclusion recorded." : "No verification record available.";
+          const sourceCell = document.createElement("td");
+          const sourceLink = document.createElement("a");
+          const candidateUrl = candidate.official_url || "";
+          if (/^https?:\/\//i.test(candidateUrl)) {
+            sourceLink.href = candidateUrl;
+            sourceLink.target = "_blank";
+            sourceLink.rel = "noopener noreferrer";
+            sourceLink.textContent = candidateUrl;
+          } else {
+            sourceLink.textContent = "unverified";
+            sourceLink.className = "unverified";
+          }
+          sourceCell.append(sourceLink);
+          row.append(nameCell, countryCell, statusCell, whyCell, sourceCell);
+          body.append(row);
+        });
+        table.append(head, body);
+        wrapper.append(table);
+        details.append(summary, wrapper);
+        parent.append(details);
       }
 
       function renderResult(data, replay = false) {
@@ -673,6 +801,7 @@
         }
         opportunitySection.append(opportunityHeading, list);
         container.append(opportunitySection);
+        addCandidateAudit(data, container);
 
         const sop = data.sop_draft;
         if (sop && sop.sop_markdown) {
@@ -730,7 +859,10 @@
         raw.append(rawSummary, pre);
         container.append(raw);
         resultContent.replaceChildren(container);
-        document.getElementById("results").scrollIntoView({behavior: "smooth", block: "start"});
+        document.getElementById("results").scrollIntoView({
+          behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+          block: "start"
+        });
       }
 
       async function responseJson(response) {
