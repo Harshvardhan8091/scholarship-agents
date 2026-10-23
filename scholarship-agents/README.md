@@ -1,5 +1,7 @@
 # Scholarship Research Desk
 
+Run: .\.venv\Scripts\python.exe -m uvicorn api:app --port 8000, then open http://localhost:8000
+
 Scholarship Research Desk is a Python 3.11+ project for exploring scholarships and graduate funding from a student resume, marksheet, and optional GitHub username. FastAPI serves a plain HTML/CSS/JavaScript interface and API; LangGraph coordinates the agents; Tavily provides web search when configured; Groq and Gemini can provide LLM calls.
 
 Recommendations are research leads, not admissions decisions. Page evidence is retained with verified fields, uncertain fields stay `unverified`, and application materials are drafts only. The program never submits an application.
